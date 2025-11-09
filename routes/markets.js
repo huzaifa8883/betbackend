@@ -190,6 +190,10 @@ const cert = fs.readFileSync('./client-2048.crt');
 const key = fs.readFileSync('./client-2048.key');
 console.log('CRT exists:', fs.existsSync('./client-2048.crt'));
 console.log('KEY exists:', fs.existsSync('./client-2048.key'));
+console.log('APP_KEY:', process.env.APP_KEY);
+console.log('USERNAME:', process.env.USERNAME ? 'SET' : 'NOT SET');
+console.log('PASSWORD:', process.env.PASSWORD ? 'SET' : 'NOT SET');
+
 // 🚀 Fetch live markets for multiple sports
 const agent = new https.Agent({
   cert: cert,
