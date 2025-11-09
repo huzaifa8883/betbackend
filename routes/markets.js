@@ -8,6 +8,9 @@ const express = require('express');
 const router = express.Router();
 const mongoose = require('mongoose');
 const config = require('../config');
+// routes/markets.js ya jis file me proxy use ho raha
+const HttpsProxyAgent = require('https-proxy-agent');   // Node.js style
+
 const axios = require('axios'); // Yeh neeche likha hua hai
 const {settleEventBets } = require('./Orders'); // Import settleEventBets function
 const mockPopularMarkets = [
