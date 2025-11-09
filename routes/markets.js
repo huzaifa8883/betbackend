@@ -136,7 +136,11 @@ const APP_KEY = process.env.BETFAIR_APP_KEY
 
 // 🚀 Fetch live
 //  markets (auto-login)
-
+const proxyOptions = {
+  host: '123.45.67.89',
+  port: 8080
+  auth: { username: 'user', password: 'pass' } 
+};
 const getUsersCollection = () => {
   if (!mongoose.connection || mongoose.connection.readyState !== 1) {
     throw new Error("MongoDB connection not established");
@@ -207,7 +211,9 @@ async function getSessionToken() {
         headers: {
           'X-Application': APP_KEY,
           'Content-Type': 'application/x-www-form-urlencoded'
-        }
+        },
+        proxy: proxyOptions, // yaha proxy pass karo
+        timeout: 10000
       }
     );
 
@@ -216,11 +222,10 @@ async function getSessionToken() {
     if (data.status === 'SUCCESS') {
       cachedSessionToken = data.token;
 
-      // Token ki expiry approx 30 mins hoti hai, aap Betfair docs check karen
-      tokenExpiryTime = now + 29 * 60 * 1000; // 29 minutes baad expire kar do
+      // Token ki expiry approx 30 mins hoti hai
+      tokenExpiryTime = now + 29 * 60 * 1000; // 29 minutes baad expire
 
       console.log('New session token generated');
-
       return cachedSessionToken;
     } else {
       throw new Error(`Login failed: ${data.error}`);
@@ -230,6 +235,7 @@ async function getSessionToken() {
     throw err;
   }
 }
+
 const sportMapById = {
   1: "Soccer",
   2: "Tennis", 
