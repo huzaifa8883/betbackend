@@ -1,0 +1,653 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BetPro Admin Dashboard</title>
+    <!-- Authentication is handled server-side -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/admin_dashboard.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/modal.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/notification.css') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <style>
+        .logout-button {
+            background-color: #d9534f;
+            color: white;
+            border: none;
+            padding: 8px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-left: 10px;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            font-weight: 500;
+            transition: background-color 0.3s;
+        }
+        
+        .logout-button:hover {
+            background-color: #c9302c;
+        }
+    </style>
+</head>
+<body>
+    <div class="admin-container">
+        <!-- Static Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <h1>BetPro</h1>
+            </div>
+            <nav class="sidebar-nav">
+                <ul>
+                    <li class="active" data-page="dashboard">
+                        <a href="#">
+                            <i class="fas fa-tachometer-alt"></i>
+                            <span>Dashboard</span>
+                        </a>
+                    </li>
+                    <li data-page="users">
+                        <a href="#">
+                            <i class="fas fa-users"></i>
+                            <span>Users</span>
+                        </a>
+                    </li>
+                    <li data-page="transactions">
+                        <a href="#">
+                            <i class="fas fa-exchange-alt"></i>
+                            <span>Transactions</span>
+                        </a>
+                    </li>
+                    <li data-page="markets">
+                        <a href="#">
+                            <i class="fas fa-chart-line"></i>
+                            <span>Markets</span>
+                        </a>
+                    </li>
+                    <li data-page="settings">
+                        <a href="#">
+                            <i class="fas fa-cog"></i>
+                            <span>Settings</span>
+                        </a>
+                    </li>
+                </ul>
+            </nav>
+        </aside>
+        
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Header with API Status -->
+            <header class="main-header">
+                <div class="header-left">
+                    <h2 id="page-title">Dashboard</h2>
+                </div>
+                <div class="api-status-container">
+                    <div class="status-indicator" id="betfair-status">
+                        <div class="dot connected"></div>
+                        <span class="status-text">Betfair API</span>
+                    </div>
+                    <div class="status-indicator" id="database-status">
+                        <div class="dot connected"></div>
+                        <span class="status-text">Database</span>
+                    </div>
+                    <div class="last-update">
+                        Last updated: <span id="last-refresh">--:--:--</span>
+                    </div>
+                    <button id="refresh-dashboard" class="refresh-button">
+                        <i class="fas fa-sync-alt"></i> Refresh
+                    </button>
+                    <button id="logout-button" class="logout-button" onclick="logout()">
+                        <i class="fas fa-sign-out-alt"></i> Logout
+                    </button>
+                </div>
+            </header>
+
+            <!-- Content Pages -->
+            <div class="content-container">
+                <!-- Dashboard Page -->
+                <div class="content-page active" id="dashboard-page">
+                    <div class="dashboard-grid">
+                        <!-- System Stats Card -->
+                        <div class="card stats-card">
+                            <div class="card-header">
+                                <h3>System Statistics</h3>
+                            </div>
+                            <div class="card-body">
+                                <div class="stats-grid">
+                                    <div class="stat-box">
+                                        <div class="value" id="total-requests">{{ system_stats.total_requests }}</div>
+                                        <div class="label">Total Requests</div>
+                                    </div>
+                                    <div class="stat-box">
+                                        <div class="value" id="requests-per-minute">{{ system_stats.requests_per_minute }}</div>
+                                        <div class="label">Requests/Min</div>
+                                    </div>
+                                    <div class="stat-box">
+                                        <div class="value" id="active-markets">{{ system_stats.active_markets }}</div>
+                                        <div class="label">Active Markets</div>
+                                    </div>
+                                    <div class="stat-box">
+                                        <div class="value" id="total-matched">{{ "{:,}".format(system_stats.total_matched) }}</div>
+                                        <div class="label">Total Matched (£)</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- User Stats Card -->
+                        <div class="card users-card">
+                            <div class="card-header">
+                                <h3>User Statistics</h3>
+                            </div>
+                            <div class="card-body">
+                                <div class="stats-grid">
+                                    <div class="stat-box clickable" onclick="showUserManagement('admin')">
+                                        <div class="value" id="admin-count" style="font-weight: 700; color: #FFFFFF;">{{ user_stats.admins }}</div>
+                                        <div class="label" style="font-weight: 600; color: #FFFFFF;">Admins</div>
+                                    </div>
+                                    <div class="stat-box clickable" onclick="showUserManagement('supermaster')">
+                                        <div class="value" id="supermaster-count" style="font-weight: 700; color: #FFFFFF;">{{ user_stats.supermasters }}</div>
+                                        <div class="label" style="font-weight: 600; color: #FFFFFF;">Super Masters</div>
+                                    </div>
+                                    <div class="stat-box clickable" onclick="showUserManagement('master')">
+                                        <div class="value" id="master-count" style="font-weight: 700; color: #FFFFFF;">{{ user_stats.masters }}</div>
+                                        <div class="label" style="font-weight: 600; color: #FFFFFF;">Masters</div>
+                                    </div>
+                                    <div class="stat-box clickable" onclick="showUserManagement('user')">
+                                        <div class="value" id="user-count" style="font-weight: 700; color: #FFFFFF;">{{ user_stats.regular_users }}</div>
+                                        <div class="label" style="font-weight: 600; color: #FFFFFF;">Users</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Sports Breakdown Card Removed to Improve Performance -->
+                    </div>
+                </div>
+
+                <!-- Users Page -->
+                <div class="content-page" id="users-page">
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>User Management</h3>
+                            <div class="user-controls">
+                                <div class="user-filters">
+                                    <select id="role-filter" class="user-filter">
+                                        <option value="all">All Roles</option>
+                                        <option value="admin">Admins</option>
+                                        <option value="supermaster">Super Masters</option>
+                                        <option value="master">Masters</option>
+                                        <option value="user">Users</option>
+                                    </select>
+                                </div>
+                                <a href="#" class="card-action-link" id="refresh-users">Refresh</a>
+                                <button id="create-admin-btn" class="btn btn-primary">
+                                    <i class="fas fa-user-plus"></i> Create New Admin
+                                </button>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <div class="table-responsive">
+                                <table class="table table-striped" id="users-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Username</th>
+                                            <th>Full Name</th>
+                                            <th>Created By ID</th>
+                                            <th>Role</th>
+                                            <th>Balance</th>
+                                            <th>Status</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="users-table-body">
+                                        <!-- User rows will be dynamically inserted here -->
+                                        <tr>
+                                            <td colspan="7" class="text-center">Loading users data...</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div class="pagination-controls" id="users-pagination">
+                                <!-- Pagination will be added here -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Transactions Page -->
+                <div class="content-page" id="transactions-page">
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>Transactions</h3>
+                        </div>
+                        <div class="card-body">
+                            <div class="recent-transactions">
+                                <h3>Recent Transactions</h3>
+                                <table class="transactions-table">
+                                    <thead>
+                                        <tr>
+                                            <th>User</th>
+                                            <th>Type</th>
+                                            <th>Amount</th>
+                                            <th>Date</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% if user_stats.recent_transactions %}
+                                            {% for transaction in user_stats.recent_transactions %}
+                                            <tr>
+                                                <td>{{ transaction.username }}</td>
+                                                <td>
+                                                    <span class="badge {{ 'badge-success' if transaction.type == 'credit' else 'badge-danger' }}">
+                                                        {{ transaction.type }}
+                                                    </span>
+                                                </td>
+                                                <td>£{{ "{:,.2f}".format(transaction.amount) }}</td>
+                                                <td>{{ transaction.timestamp|datetime }}</td>
+                                            </tr>
+                                            {% endfor %}
+                                        {% else %}
+                                            <tr>
+                                                <td colspan="4">No recent transactions</td>
+                                            </tr>
+                                        {% endif %}
+                                    </tbody>
+                                </table>
+                                <div class="view-all-link">
+                                    <a href="/user/transactions">View All Transactions</a>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Markets Page -->
+                <div class="content-page" id="markets-page">
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>Markets</h3>
+                        </div>
+                        <div class="card-body">
+                            <p>Markets content will be displayed here.</p>
+                            <a href="/markets" class="btn">View All Markets</a>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Settings Page -->
+                <div class="content-page" id="settings-page">
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>Settings</h3>
+                        </div>
+                        <div class="card-body">
+                            <p>Settings content will be displayed here.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Create Admin Modal -->
+    <div id="create-admin-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Create New Admin</h2>
+                <span class="close">&times;</span>
+            </div>
+            <div class="modal-body">
+                <form id="create-admin-form">
+                    <div class="form-group">
+                        <label for="username">Username</label>
+                        <input type="text" id="username" name="username" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="full-name">Full Name</label>
+                        <input type="text" id="full-name" name="full_name" placeholder="Enter full name">
+                    </div>
+                    <div class="form-group">
+                        <label for="email">Email</label>
+                        <input type="email" id="email" name="email" placeholder="Enter email address">
+                    </div>
+                    <div class="form-group">
+                        <label for="password">Password</label>
+                        <input type="password" id="password" name="password" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="confirm-password">Confirm Password</label>
+                        <input type="password" id="confirm-password" name="confirm_password" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="role">Type/Role</label>
+                        <select id="role" name="role" required>
+                            <option value="admin">Admin</option>
+                            <option value="supermaster">Super Master</option>
+                            <option value="master">Master</option>
+                            <option value="user">User</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="initial-balance">Initial Balance</label>
+                        <input type="number" id="initial-balance" name="initial_balance" step="0.01" min="0" value="0">
+                    </div>
+                    <div class="form-group">
+                        <label for="contact">Phone</label>
+                        <input type="tel" id="contact" name="phone">
+                    </div>
+                    <div class="form-group">
+                        <label for="reference">Reference</label>
+                        <input type="text" id="reference" name="reference">
+                    </div>
+                    <div class="form-actions">
+                        <button type="button" class="btn btn-secondary" id="cancel-create-admin">Cancel</button>
+                        <button type="submit" class="btn btn-primary">Create</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+    
+    <!-- View User Modal -->
+    <div id="view-user-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>User Details</h2>
+                <span class="close">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div id="user-details">
+                    <div class="detail-row">
+                        <div class="detail-label">Username:</div>
+                        <div class="detail-value" id="view-username"></div>
+                    </div>
+                    <div class="detail-row">
+                        <div class="detail-label">Full Name:</div>
+                        <div class="detail-value" id="view-full-name"></div>
+                    </div>
+                    <div class="detail-row">
+                        <div class="detail-label">Created By:</div>
+                        <div class="detail-value" id="view-created-by"></div>
+                    </div>
+                    <div class="detail-row">
+                        <div class="detail-label">Created At:</div>
+                        <div class="detail-value" id="view-created-at"></div>
+                    </div>
+                    <div class="detail-row">
+                        <div class="detail-label">Role:</div>
+                        <div class="detail-value" id="view-role"></div>
+                    </div>
+                    <div class="detail-row">
+                        <div class="detail-label">Balance:</div>
+                        <div class="detail-value" id="view-balance"></div>
+                    </div>
+                    <div class="detail-row">
+                        <div class="detail-label">Status:</div>
+                        <div class="detail-value" id="view-status"></div>
+                    </div>
+                    <div class="detail-row">
+                        <div class="detail-label">Phone:</div>
+                        <div class="detail-value" id="view-contact"></div>
+                    </div>
+                    <div class="detail-row">
+                        <div class="detail-label">Reference:</div>
+                        <div class="detail-value" id="view-reference"></div>
+                    </div>
+                    <div class="detail-row">
+                        <div class="detail-label">Created:</div>
+                        <div class="detail-value" id="view-created"></div>
+                    </div>
+                    <div class="detail-row">
+                        <div class="detail-label">Last Login:</div>
+                        <div class="detail-value" id="view-last-login"></div>
+                    </div>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" id="close-view-user">Close</button>
+                    <button type="button" class="btn btn-primary" id="edit-user-from-view">Edit</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Edit User Modal -->
+    <div id="edit-user-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Edit User</h2>
+                <span class="close">&times;</span>
+            </div>
+            <div class="modal-body">
+                <form id="edit-user-form">
+                    <input type="hidden" id="edit-user-id">
+                    <div class="form-group">
+                        <label for="edit-username">Username</label>
+                        <input type="text" id="edit-username" name="username" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="edit-full-name">Full Name</label>
+                        <input type="text" id="edit-full-name" name="full_name" placeholder="Enter full name">
+                    </div>
+                    <div class="form-group">
+                        <label for="edit-email">Email</label>
+                        <input type="email" id="edit-email" name="email" placeholder="Enter email address">
+                    </div>
+                    <div class="form-group">
+                        <label for="edit-password">New Password (leave blank to keep current)</label>
+                        <input type="password" id="edit-password" name="password">
+                    </div>
+                    <div class="form-group">
+                        <label for="edit-role">Type/Role</label>
+                        <select id="edit-role" name="role" required>
+                            <option value="admin">Admin</option>
+                            <option value="supermaster">Super Master</option>
+                            <option value="master">Master</option>
+                            <option value="user">User</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="edit-wallet-balance">Wallet Balance</label>
+                        <input type="number" id="edit-wallet-balance" name="wallet_balance" step="0.01" min="0">
+                    </div>
+                    <div class="form-group">
+                        <label for="edit-contact">Phone</label>
+                        <input type="tel" id="edit-contact" name="phone">
+                    </div>
+                    <div class="form-group">
+                        <label for="edit-reference">Reference</label>
+                        <input type="text" id="edit-reference" name="reference">
+                    </div>
+                    <div class="form-group">
+                        <label for="edit-status">Status</label>
+                        <select id="edit-status" name="status" required>
+                            <option value="active">Active</option>
+                            <option value="inactive">Inactive</option>
+                            <option value="suspended">Suspended</option>
+                        </select>
+                    </div>
+                    <div class="form-actions">
+                        <button type="button" class="btn btn-secondary" id="cancel-edit-user">Cancel</button>
+                        <button type="submit" class="btn btn-primary">Save Changes</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/admin_dashboard.js') }}"></script>
+    
+    {% if initial_load %}
+    <script>
+        // Asynchronously refresh dashboard data after initial page load
+        document.addEventListener('DOMContentLoaded', function() {
+            // Wait for page to fully load and render
+            setTimeout(function() {
+                // Refresh API status
+                fetch('/api/status')
+                    .then(response => response.json())
+                    .then(data => {
+                        // Update API status indicators
+                        updateApiStatus(data);
+                    })
+                    .catch(error => console.error('Error fetching API status:', error));
+                
+                // Refresh system stats
+                fetch('/api/stats')
+                    .then(response => response.json())
+                    .then(data => {
+                        // Update system stats
+                        updateSystemStats(data);
+                    })
+                    .catch(error => console.error('Error fetching system stats:', error));
+                
+                // Refresh events data
+                fetch('/api/events/active')
+                    .then(response => response.json())
+                    .then(data => {
+                        // Update events data
+                        updateEventsData(data);
+                    })
+                    .catch(error => console.error('Error fetching events data:', error));
+            }, 2000); // Wait 2 seconds after page load before refreshing data
+        });
+        
+        // Helper functions to update dashboard sections
+        function updateApiStatus(data) {
+            // Update API status indicators
+            const betfairStatus = document.getElementById('betfair-status');
+            const dbStatus = document.getElementById('db-status');
+            const sessionStatus = document.getElementById('session-status');
+            
+            if (betfairStatus) {
+                betfairStatus.className = data.betfair_connected ? 'status-indicator connected' : 'status-indicator disconnected';
+            }
+            
+            if (dbStatus) {
+                dbStatus.className = data.database_connected ? 'status-indicator connected' : 'status-indicator disconnected';
+            }
+            
+            if (sessionStatus) {
+                sessionStatus.className = data.session_valid ? 'status-indicator connected' : 'status-indicator disconnected';
+                
+                // Update session expiry time if available
+                const expiryElement = document.getElementById('session-expiry');
+                if (expiryElement && data.session_expiry_hours !== undefined) {
+                    expiryElement.textContent = `${data.session_expiry_hours}h ${data.session_expiry_minutes}m`;
+                }
+            }
+        }
+        
+        function updateSystemStats(data) {
+            // Update system stats counters
+            const requestsCounter = document.getElementById('total-requests');
+            const rpmCounter = document.getElementById('requests-per-minute');
+            const marketsCounter = document.getElementById('active-markets');
+            const matchedCounter = document.getElementById('total-matched');
+            
+            if (requestsCounter) requestsCounter.textContent = data.total_requests.toLocaleString();
+            if (rpmCounter) rpmCounter.textContent = data.requests_per_minute.toLocaleString();
+            if (marketsCounter) marketsCounter.textContent = data.active_markets.toLocaleString();
+            if (matchedCounter) matchedCounter.textContent = data.total_matched.toLocaleString();
+        }
+        
+        function updateEventsData(data) {
+            // This would update the events table and sports breakdown
+            // Implementation depends on your specific HTML structure
+            console.log('Events data refreshed:', data);
+            
+            // Update sports breakdown if the chart exists
+            if (window.sportsChart && data.sports_breakdown) {
+                const labels = Object.keys(data.sports_breakdown);
+                const values = Object.values(data.sports_breakdown);
+                
+                window.sportsChart.data.labels = labels;
+                window.sportsChart.data.datasets[0].data = values;
+                window.sportsChart.update();
+            }
+            
+            // Update events table if it exists
+            const eventsTable = document.querySelector('.events-table tbody');
+            if (eventsTable && data.events && data.events.length > 0) {
+                // Clear existing rows
+                eventsTable.innerHTML = '';
+                
+                // Add new rows
+                data.events.forEach(event => {
+                    const row = document.createElement('tr');
+                    row.innerHTML = `
+                        <td>${event.name}</td>
+                        <td>${event.type}</td>
+                        <td>${event.start_time}</td>
+                        <td>${event.market_count}</td>
+                    `;
+                    eventsTable.appendChild(row);
+                });
+            }
+        }
+        
+        // Logout function
+        function logout() {
+            console.log('Logout function called');
+            
+            // Clear any existing notifications
+            const existingNotifications = document.querySelectorAll('.notification');
+            existingNotifications.forEach(notification => notification.remove());
+            
+            // Get the auth token
+            const token = localStorage.getItem('auth_token');
+            console.log('Auth token exists:', !!token);
+            
+            // Always clear the token first to ensure logout works
+            localStorage.removeItem('auth_token');
+            sessionStorage.removeItem('auth_token');
+            console.log('Auth token cleared from storage');
+            
+            // Show a notification that logout was successful
+            const notification = document.createElement('div');
+            notification.className = 'notification success';
+            notification.innerHTML = '<i class="fas fa-check-circle"></i> Logout successful. Redirecting...';
+            notification.style.position = 'fixed';
+            notification.style.top = '20px';
+            notification.style.right = '20px';
+            notification.style.backgroundColor = '#4CAF50';
+            notification.style.color = 'white';
+            notification.style.padding = '15px';
+            notification.style.borderRadius = '5px';
+            notification.style.zIndex = '9999';
+            document.body.appendChild(notification);
+            console.log('Notification displayed');
+            
+            // If we have a token, call the API
+            if (token) {
+                console.log('Calling logout API');
+                // Call the logout API endpoint
+                fetch('/api/user_management/logout', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    }
+                })
+                .then(response => {
+                    console.log('Logout API response:', response.status);
+                    return response.json();
+                })
+                .then(data => {
+                    console.log('Logout API data:', data);
+                })
+                .catch(error => {
+                    console.error('Logout API error:', error);
+                });
+            }
+            
+            // Redirect after a delay regardless of API response
+            console.log('Setting redirect timeout');
+            setTimeout(() => {
+                console.log('Redirecting to root URL');
+                window.location.replace('/');
+            }, 2000);
+        }
+    </script>
+    {% endif %}
+</body>
+</html>
