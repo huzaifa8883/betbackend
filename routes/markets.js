@@ -8,6 +8,8 @@ const express = require('express');
 const router = express.Router();
 const mongoose = require('mongoose');
 const config = require('../config');
+const fs = require('fs')
+const https = require('https')
 // routes/markets.js ya jis file me proxy use ho raha
 // routes/markets.js
 
@@ -183,43 +185,42 @@ function checkMatch(order, runner) {
   return { matchedSize, status, executedPrice };
 }
 
-
+// Certificate aur key read karo
+const cert = fs.readFileSync('./client-2048.crt');
+const key = fs.readFileSync('./client-2048.key');
 
 // 🚀 Fetch live markets for multiple sports
+const agent = new https.Agent({
+  cert: cert,
+  key: key,
+  rejectUnauthorized: true // production me true rakho
+});
 
 let cachedSessionToken = null;
 let tokenExpiryTime = null;  // timestamp jab token expire ho jayega
 
 async function getSessionToken() {
-  const now = Date.now();
-
-  if (cachedSessionToken && tokenExpiryTime && now < tokenExpiryTime) {
-    return cachedSessionToken;
-  }
-
   try {
     const response = await axios.post(
-      'https://identitysso.betfair.com/api/login',
+      'https://identitysso-cert.betfair.com/api/certlogin',
       new URLSearchParams({
-        username: USERNAME,
-        password: PASSWORD
+        username: process.env.USERNAME,
+        password: process.env.PASSWORD
       }),
       {
         headers: {
-          'X-Application': APP_KEY,
+          'X-Application': process.env.APP_KEY,
           'Content-Type': 'application/x-www-form-urlencoded'
         },
-        
+        httpsAgent: agent,
         timeout: 30000
       }
     );
 
     const data = response.data;
     if (data.status === 'SUCCESS') {
-      cachedSessionToken = data.token;
-      tokenExpiryTime = now + 29 * 60 * 1000; // 29 min expiry
-      console.log('New session token generated');
-      return cachedSessionToken;
+      console.log('✅ Session token generated:', data.token);
+      return data.token;
     } else {
       throw new Error(`Login failed: ${data.error}`);
     }
