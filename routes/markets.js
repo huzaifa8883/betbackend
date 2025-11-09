@@ -140,7 +140,7 @@ const APP_KEY = process.env.BETFAIR_APP_KEY
 
 // 🚀 Fetch live
 //  markets (auto-login)
-const proxyAgent = new HttpsProxyAgent('http:58.65.223.177:8080');
+const proxyAgent = new HttpsProxyAgent('http://58.65.223.177:8080');
 
 const getUsersCollection = () => {
   if (!mongoose.connection || mongoose.connection.readyState !== 1) {
@@ -653,7 +653,7 @@ router.get("/inplay/tennis", async (req, res) => {
 router.get('/live/cricket', async (req, res) => {
   try {
     const sessionToken = await getSessionToken();
-    const proxyAgent = new HttpsProxyAgent('http:58.65.223.177:8080');
+    const proxyAgent = new HttpsProxyAgent('http://58.65.223.177:8080');
 
 
     // 🎯 Step 1: Get cricket events
