@@ -137,7 +137,7 @@ const APP_KEY = process.env.BETFAIR_APP_KEY
 // 🚀 Fetch live
 //  markets (auto-login)
 const proxyOptions = {
-  host: '123.45.67.89',
+  host: '58.65.223.177',
   port: 8080
   // auth: { username: 'user', password: 'pass' } 
 };
