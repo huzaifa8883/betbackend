@@ -213,7 +213,7 @@ async function getSessionToken() {
           'Content-Type': 'application/x-www-form-urlencoded'
         },
         proxy: proxyOptions, // yaha proxy pass karo
-        timeout: 10000
+        timeout: 30000
       }
     );
 
