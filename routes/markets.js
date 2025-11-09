@@ -136,11 +136,8 @@ const APP_KEY = process.env.BETFAIR_APP_KEY
 
 // 🚀 Fetch live
 //  markets (auto-login)
-const proxyOptions = {
-  host: '58.65.223.177',
-  port: 8080
-  // auth: { username: 'user', password: 'pass' } 
-};
+const proxyAgent = new HttpsProxyAgent('http:58.65.223.177:8080');
+
 const getUsersCollection = () => {
   if (!mongoose.connection || mongoose.connection.readyState !== 1) {
     throw new Error("MongoDB connection not established");
@@ -210,7 +207,7 @@ async function getSessionToken() {
           'X-Application': APP_KEY,
           'Content-Type': 'application/x-www-form-urlencoded'
         },
-        proxy: proxyOptions.host ? proxyOptions : undefined,
+        httpsAgent: proxyAgent,   // proxy agent used here
         timeout: 30000
       }
     );
@@ -229,6 +226,7 @@ async function getSessionToken() {
     throw err;
   }
 }
+
 
 const sportMapById = {
   1: "Soccer",
@@ -651,6 +649,8 @@ router.get("/inplay/tennis", async (req, res) => {
 router.get('/live/cricket', async (req, res) => {
   try {
     const sessionToken = await getSessionToken();
+    const proxyAgent = new HttpsProxyAgent('http:58.65.223.177:8080');
+
 
     // 🎯 Step 1: Get cricket events
     const eventsResponse = await axios.post(
@@ -676,8 +676,8 @@ router.get('/live/cricket', async (req, res) => {
           'X-Authentication': sessionToken,
           'Content-Type': 'application/json'
         },
-         timeout: 30000,
-         proxy: proxyOptions.host ? proxyOptions : undefined
+          httpsAgent: proxyAgent,
+          timeout: 30000
       }
     );
 
@@ -708,8 +708,8 @@ router.get('/live/cricket', async (req, res) => {
           'X-Authentication': sessionToken,
           'Content-Type': 'application/json'
         },
-           timeout: 30000,
-        proxy: proxyOptions.host ? proxyOptions : undefined
+             httpsAgent: proxyAgent,
+             timeout: 30000
       }
     );
 
@@ -738,8 +738,8 @@ router.get('/live/cricket', async (req, res) => {
           'X-Authentication': sessionToken,
           'Content-Type': 'application/json'
         },
-           timeout: 30000,
-        proxy: proxyOptions.host ? proxyOptions : undefined
+             httpsAgent: proxyAgent,
+              timeout: 30000
       }
     );
 
