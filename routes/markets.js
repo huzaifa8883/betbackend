@@ -652,7 +652,6 @@ router.get("/inplay/tennis", async (req, res) => {
 router.get('/live/cricket', async (req, res) => {
   try {
     const sessionToken = await getSessionToken();
-    const proxyAgent = new HttpsProxyAgent('http://58.65.223.177:8080');
 
 
     // 🎯 Step 1: Get cricket events
@@ -679,6 +678,8 @@ router.get('/live/cricket', async (req, res) => {
           'X-Authentication': sessionToken,
           'Content-Type': 'application/json'
         },
+            httpsAgent: agent, // certificate ke saath
+
           timeout: 60000
       }
     );
@@ -710,6 +711,8 @@ router.get('/live/cricket', async (req, res) => {
           'X-Authentication': sessionToken,
           'Content-Type': 'application/json'
         },
+            httpsAgent: agent, // certificate ke saath
+
              timeout: 60000
       }
     );
@@ -739,6 +742,8 @@ router.get('/live/cricket', async (req, res) => {
           'X-Authentication': sessionToken,
           'Content-Type': 'application/json'
         },
+            httpsAgent: agent, // certificate ke saath
+
               timeout: 60000
       }
     );
