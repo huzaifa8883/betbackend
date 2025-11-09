@@ -137,7 +137,7 @@ const APP_KEY = process.env.BETFAIR_APP_KEY
 // 🚀 Fetch live
 //  markets (auto-login)
 const proxyOptions = {
-  host: '58.65.223.177',
+  host: '123.45.67.89',
   port: 8080
   // auth: { username: 'user', password: 'pass' } 
 };
@@ -194,12 +194,10 @@ let tokenExpiryTime = null;  // timestamp jab token expire ho jayega
 async function getSessionToken() {
   const now = Date.now();
 
-  // Agar token exist karta hai aur expire nahi hua
   if (cachedSessionToken && tokenExpiryTime && now < tokenExpiryTime) {
     return cachedSessionToken;
   }
 
-  // Naya token generate karo
   try {
     const response = await axios.post(
       'https://identitysso.betfair.com/api/login',
@@ -212,19 +210,15 @@ async function getSessionToken() {
           'X-Application': APP_KEY,
           'Content-Type': 'application/x-www-form-urlencoded'
         },
-        proxy: proxyOptions, // yaha proxy pass karo
+        proxy: proxyOptions.host ? proxyOptions : undefined,
         timeout: 30000
       }
     );
 
     const data = response.data;
-
     if (data.status === 'SUCCESS') {
       cachedSessionToken = data.token;
-
-      // Token ki expiry approx 30 mins hoti hai
-      tokenExpiryTime = now + 29 * 60 * 1000; // 29 minutes baad expire
-
+      tokenExpiryTime = now + 29 * 60 * 1000; // 29 min expiry
       console.log('New session token generated');
       return cachedSessionToken;
     } else {
@@ -681,7 +675,9 @@ router.get('/live/cricket', async (req, res) => {
           'X-Application': APP_KEY,
           'X-Authentication': sessionToken,
           'Content-Type': 'application/json'
-        }
+        },
+         timeout: 30000,
+         proxy: proxyOptions.host ? proxyOptions : undefined
       }
     );
 
@@ -711,7 +707,9 @@ router.get('/live/cricket', async (req, res) => {
           'X-Application': APP_KEY,
           'X-Authentication': sessionToken,
           'Content-Type': 'application/json'
-        }
+        },
+           timeout: 30000,
+        proxy: proxyOptions.host ? proxyOptions : undefined
       }
     );
 
@@ -739,7 +737,9 @@ router.get('/live/cricket', async (req, res) => {
           'X-Application': APP_KEY,
           'X-Authentication': sessionToken,
           'Content-Type': 'application/json'
-        }
+        },
+           timeout: 30000,
+        proxy: proxyOptions.host ? proxyOptions : undefined
       }
     );
 
