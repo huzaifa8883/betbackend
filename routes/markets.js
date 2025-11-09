@@ -205,33 +205,41 @@ console.log('HTTPS agent created:', agent.options.cert ? true : false);
 let cachedSessionToken = null;
 let tokenExpiryTime = null;  // timestamp jab token expire ho jayega
 
+
 async function getSessionToken() {
   try {
     const response = await axios.post(
-      'https://identitysso-cert.betfair.com/api/certlogin',
+      "https://identitysso-cert.betfair.com/api/certlogin",
       new URLSearchParams({
-        username: process.env.BETFAIR_USERNAME,
-        password: process.env.BETFAIR_PASSWORD
-      }),
+        username: process.env.USERNAME,
+        password: process.env.PASSWORD,
+      }).toString(),
       {
         headers: {
-          'X-Application': process.env.BETFAIR_APP_KEY,
-          'Content-Type': 'application/x-www-form-urlencoded'
+          "X-Application": process.env.APP_KEY,
+          "Content-Type": "application/x-www-form-urlencoded",
         },
         httpsAgent: agent,
-        timeout: 30000
+        timeout: 30000,
       }
     );
 
     const data = response.data;
-    if (data.status === 'SUCCESS') {
-      console.log('✅ Session token generated:', data.token);
-      return data.token;
+    if (data.loginStatus === "SUCCESS") {  // 👈 Betfair returns `loginStatus`, not `status`
+      console.log("✅ Session token generated:", data.sessionToken);
+      return data.sessionToken;
     } else {
-      throw new Error(`Login failed: ${data.error}`);
+      throw new Error(`Login failed: ${data.loginStatus}`);
     }
   } catch (err) {
-    console.error('❌ Failed to login to Betfair:', err.message);
+    if (err.response) {
+      console.error("❌ Failed to login to Betfair:");
+      console.error("Status:", err.response.status);
+      console.error("Headers:", err.response.headers);
+      console.error("Data:", err.response.data); // 👈 Real message from Betfair
+    } else {
+      console.error("❌ Login error:", err.message);
+    }
     throw err;
   }
 }
