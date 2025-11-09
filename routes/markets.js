@@ -186,8 +186,8 @@ function checkMatch(order, runner) {
 }
 
 // Certificate aur key read karo
-const cert = fs.readFileSync('/root/betbackend/client-2048.crt'); // Buffer
-const key  = fs.readFileSync('/root/betbackend/client-2048.key'); // Buffer
+const p12 = fs.readFileSync('/root/betbackend/client-2048.p12');
+
 
 
 console.log('CRT exists:', fs.existsSync('./client-2048.crt'));
@@ -198,11 +198,11 @@ console.log('PASSWORD:', process.env.BETFAIR_PASSWORD ? 'SET' : 'NOT SET');
 
 // 🚀 Fetch live markets for multiple sports
 const agent = new https.Agent({
-  cert: cert,
-  key: key,
+  pfx: p12,
+ passphrase: 'Bahria@2026',
+
   rejectUnauthorized: true // production me true rakho
 });
-console.log('HTTPS agent created:', agent.options.cert ? true : false);
 
 let cachedSessionToken = null;
 let tokenExpiryTime = null;  // timestamp jab token expire ho jayega
