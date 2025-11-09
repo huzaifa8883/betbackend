@@ -186,8 +186,9 @@ function checkMatch(order, runner) {
 }
 
 // Certificate aur key read karo
-const cert = fs.readFileSync('./client-2048.crt');
-const key = fs.readFileSync('./client-2048.key');
+const cert = fs.readFileSync('./betbackend/client-2048.crt');
+const key = fs.readFileSync('./betbackend/client-2048.key');
+
 console.log('CRT exists:', fs.existsSync('./client-2048.crt'));
 console.log('KEY exists:', fs.existsSync('./client-2048.key'));
 console.log('APP_KEY:', process.env.BETFAIR_APP_KEY);
