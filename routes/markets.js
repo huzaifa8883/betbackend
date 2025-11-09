@@ -235,7 +235,26 @@ async function getSessionToken() {
     throw err;
   }
 }
+async function testLogin() {
+  try {
+    const res = await axios.post(
+      'https://identitysso-cert.betfair.com/api/certlogin',
+      new URLSearchParams({
+        username: process.env.USERNAME,
+        password: process.env.PASSWORD
+      }),
+      {
+        headers: { 'X-Application': process.env.APP_KEY, 'Content-Type': 'application/x-www-form-urlencoded' },
+        httpsAgent: agent
+      }
+    );
+    console.log(res.data);
+  } catch (e) {
+    console.error(e.response?.data || e.message);
+  }
+}
 
+testLogin();
 
 const sportMapById = {
   1: "Soccer",
