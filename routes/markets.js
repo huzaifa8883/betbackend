@@ -10,7 +10,6 @@ const mongoose = require('mongoose');
 const config = require('../config');
 // routes/markets.js ya jis file me proxy use ho raha
 // routes/markets.js
-const { HttpsProxyAgent } = require('https-proxy-agent'); // destructure karo
 
 const axios = require('axios'); // Yeh neeche likha hua hai
 const {settleEventBets } = require('./Orders'); // Import settleEventBets function
@@ -140,7 +139,6 @@ const APP_KEY = process.env.BETFAIR_APP_KEY
 
 // 🚀 Fetch live
 //  markets (auto-login)
-const proxyAgent = new HttpsProxyAgent('http://58.65.223.177:8080');
 
 const getUsersCollection = () => {
   if (!mongoose.connection || mongoose.connection.readyState !== 1) {
@@ -211,7 +209,7 @@ async function getSessionToken() {
           'X-Application': APP_KEY,
           'Content-Type': 'application/x-www-form-urlencoded'
         },
-        httpsAgent: proxyAgent,   // proxy agent used here
+        
         timeout: 30000
       }
     );
@@ -680,8 +678,7 @@ router.get('/live/cricket', async (req, res) => {
           'X-Authentication': sessionToken,
           'Content-Type': 'application/json'
         },
-          httpsAgent: proxyAgent,
-          timeout: 30000
+          timeout: 60000
       }
     );
 
@@ -712,8 +709,7 @@ router.get('/live/cricket', async (req, res) => {
           'X-Authentication': sessionToken,
           'Content-Type': 'application/json'
         },
-             httpsAgent: proxyAgent,
-             timeout: 30000
+             timeout: 60000
       }
     );
 
@@ -742,8 +738,7 @@ router.get('/live/cricket', async (req, res) => {
           'X-Authentication': sessionToken,
           'Content-Type': 'application/json'
         },
-             httpsAgent: proxyAgent,
-              timeout: 30000
+              timeout: 60000
       }
     );
 
