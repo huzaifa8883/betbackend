@@ -139,7 +139,7 @@ const APP_KEY = process.env.BETFAIR_APP_KEY
 const proxyOptions = {
   host: '123.45.67.89',
   port: 8080
-  auth: { username: 'user', password: 'pass' } 
+  // auth: { username: 'user', password: 'pass' } 
 };
 const getUsersCollection = () => {
   if (!mongoose.connection || mongoose.connection.readyState !== 1) {
