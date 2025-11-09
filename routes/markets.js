@@ -188,13 +188,15 @@ function checkMatch(order, runner) {
 // Certificate aur key read karo
 const cert = fs.readFileSync('./client-2048.crt');
 const key = fs.readFileSync('./client-2048.key');
-
+console.log('CRT exists:', fs.existsSync('./client-2048.crt'));
+console.log('KEY exists:', fs.existsSync('./client-2048.key'));
 // 🚀 Fetch live markets for multiple sports
 const agent = new https.Agent({
   cert: cert,
   key: key,
   rejectUnauthorized: true // production me true rakho
 });
+console.log('HTTPS agent created:', agent.options.cert ? true : false);
 
 let cachedSessionToken = null;
 let tokenExpiryTime = null;  // timestamp jab token expire ho jayega
