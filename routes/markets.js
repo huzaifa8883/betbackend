@@ -211,12 +211,12 @@ async function getSessionToken() {
     const response = await axios.post(
       "https://identitysso-cert.betfair.com/api/certlogin",
       new URLSearchParams({
-        username: process.env.USERNAME,
-        password: process.env.PASSWORD,
+        username: process.env.BETFAIR_USERNAME,
+        password: process.env.BETFAIR_PASSWORD,
       }).toString(),
       {
         headers: {
-          "X-Application": process.env.APP_KEY,
+          "X-Application": process.env.BETFAIR_APP_KEY,
           "Content-Type": "application/x-www-form-urlencoded",
         },
         httpsAgent: agent,
