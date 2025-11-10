@@ -8,11 +8,6 @@ const express = require('express');
 const router = express.Router();
 const mongoose = require('mongoose');
 const config = require('../config');
-const fs = require('fs')
-const https = require('https')
-// routes/markets.js ya jis file me proxy use ho raha
-// routes/markets.js
-
 const axios = require('axios'); // Yeh neeche likha hua hai
 const {settleEventBets } = require('./Orders'); // Import settleEventBets function
 const mockPopularMarkets = [
@@ -185,68 +180,56 @@ function checkMatch(order, runner) {
   return { matchedSize, status, executedPrice };
 }
 
-// Certificate aur key read karo
-const p12 = fs.readFileSync('/root/betbackend/client-2048.p12');
 
-
-
-console.log('CRT exists:', fs.existsSync('./client-2048.crt'));
-console.log('KEY exists:', fs.existsSync('./client-2048.key'));
-console.log('APP_KEY:', process.env.BETFAIR_APP_KEY);
-console.log('USERNAME:', process.env.BETFAIR_USERNAME ? 'SET' : 'NOT SET');
-console.log('PASSWORD:', process.env.BETFAIR_PASSWORD ? 'SET' : 'NOT SET');
 
 // 🚀 Fetch live markets for multiple sports
-const agent = new https.Agent({
-  pfx: p12,
- passphrase: 'Bahria@2026',
-
-  rejectUnauthorized: true // production me true rakho
-});
 
 let cachedSessionToken = null;
 let tokenExpiryTime = null;  // timestamp jab token expire ho jayega
 
-
 async function getSessionToken() {
+  const now = Date.now();
+
+  // Agar token exist karta hai aur expire nahi hua
+  if (cachedSessionToken && tokenExpiryTime && now < tokenExpiryTime) {
+    return cachedSessionToken;
+  }
+
+  // Naya token generate karo
   try {
     const response = await axios.post(
-      "https://identitysso-cert.betfair.com/api/certlogin",
+      'https://identitysso.betfair.com/api/login',
       new URLSearchParams({
-        username: process.env.BETFAIR_USERNAME,
-        password: process.env.BETFAIR_PASSWORD,
-      }).toString(),
+        username: USERNAME,
+        password: PASSWORD
+      }),
       {
         headers: {
-          "X-Application": process.env.BETFAIR_APP_KEY,
-          "Content-Type": "application/x-www-form-urlencoded",
-        },
-        httpsAgent: agent,
-        timeout: 30000,
+          'X-Application': APP_KEY,
+          'Content-Type': 'application/x-www-form-urlencoded'
+        }
       }
     );
 
     const data = response.data;
-    if (data.loginStatus === "SUCCESS") {  // 👈 Betfair returns `loginStatus`, not `status`
-      console.log("✅ Session token generated:", data.sessionToken);
-      return data.sessionToken;
+
+    if (data.status === 'SUCCESS') {
+      cachedSessionToken = data.token;
+
+      // Token ki expiry approx 30 mins hoti hai, aap Betfair docs check karen
+      tokenExpiryTime = now + 29 * 60 * 1000; // 29 minutes baad expire kar do
+
+      console.log('New session token generated');
+
+      return cachedSessionToken;
     } else {
-      throw new Error(`Login failed: ${data.loginStatus}`);
+      throw new Error(`Login failed: ${data.error}`);
     }
   } catch (err) {
-    if (err.response) {
-      console.error("❌ Failed to login to Betfair:");
-      console.error("Status:", err.response.status);
-      console.error("Headers:", err.response.headers);
-      console.error("Data:", err.response.data); // 👈 Real message from Betfair
-    } else {
-      console.error("❌ Login error:", err.message);
-    }
+    console.error('❌ Failed to login to Betfair:', err.message);
     throw err;
   }
 }
-
-
 const sportMapById = {
   1: "Soccer",
   2: "Tennis", 
@@ -669,7 +652,6 @@ router.get('/live/cricket', async (req, res) => {
   try {
     const sessionToken = await getSessionToken();
 
-
     // 🎯 Step 1: Get cricket events
     const eventsResponse = await axios.post(
       'https://api.betfair.com/exchange/betting/json-rpc/v1',
@@ -693,10 +675,7 @@ router.get('/live/cricket', async (req, res) => {
           'X-Application': APP_KEY,
           'X-Authentication': sessionToken,
           'Content-Type': 'application/json'
-        },
-            httpsAgent: agent, // certificate ke saath
-
-          timeout: 60000
+        }
       }
     );
 
@@ -726,10 +705,7 @@ router.get('/live/cricket', async (req, res) => {
           'X-Application': APP_KEY,
           'X-Authentication': sessionToken,
           'Content-Type': 'application/json'
-        },
-            httpsAgent: agent, // certificate ke saath
-
-             timeout: 60000
+        }
       }
     );
 
@@ -757,10 +733,7 @@ router.get('/live/cricket', async (req, res) => {
           'X-Application': APP_KEY,
           'X-Authentication': sessionToken,
           'Content-Type': 'application/json'
-        },
-            httpsAgent: agent, // certificate ke saath
-
-              timeout: 60000
+        }
       }
     );
 
@@ -2485,6 +2458,23 @@ module.exports  ={
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      
 
 
 
