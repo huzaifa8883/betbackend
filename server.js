@@ -20,7 +20,7 @@ const io = new Server(server, {
       'https://www.bfexch.com',
       'http://localhost:8000'
     ],
-    methods: ['GET', 'POST'],
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     credentials: true
   }
 });
@@ -34,9 +34,9 @@ const PORT = process.env.PORT || config.api.port || 5000;
 app.use(cors({
   origin: function (origin, callback) {
     const allowedOrigins = [
-      'https://nonalexch.com',
-      'https://www.nonalexch.com',
-      'http://localhost:8000'
+      'https://bfexch.com',
+      'https://www.bfexch.com',
+      'http://localhost:8000',
     ];
     if (!origin || allowedOrigins.includes(origin)) {
       callback(null, true);
