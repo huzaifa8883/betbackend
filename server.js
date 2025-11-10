@@ -16,8 +16,8 @@ const { Server } = require("socket.io");
 const io = new Server(server, {
   cors: {
     origin: [
-      'https://nonalexch.com',
-      'https://www.nonalexch.com',
+      'https://bfexch.com',
+      'https://www.bfexch.com',
       'http://localhost:8000'
     ],
     methods: ['GET', 'POST'],
