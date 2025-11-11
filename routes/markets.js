@@ -1,6 +1,6 @@
 /**
  * Markets API Routes
- * Handles all market-related API endpoints
+ * Handles all market-related API endpoint
  */
 
 const { v4: uuidv4 } = require('uuid');
