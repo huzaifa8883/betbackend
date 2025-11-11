@@ -1406,9 +1406,9 @@ router.get('/live/horse', async (req, res) => {
   try {
     const sessionToken = await getSessionToken();
 
-    // Wider range: past 6h to next 6h
-    const fromTime = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
-    const toTime = new Date(Date.now() + 6 * 60 * 60 * 1000).toISOString();
+    // Wider range: now to next 12h (future races)
+    const fromTime = new Date().toISOString();
+    const toTime = new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString();
 
     // Step 1: Fetch Horse Racing Events
     const eventsResponse = await axios.post(
@@ -1416,7 +1416,12 @@ router.get('/live/horse', async (req, res) => {
       [{
         jsonrpc: '2.0',
         method: 'SportsAPING/v1.0/listEvents',
-        params: { filter: { eventTypeIds: ['7'], marketStartTime: { from: fromTime, to: toTime } } },
+        params: {
+          filter: {
+            eventTypeIds: ['7'], // Horse Racing
+            marketStartTime: { from: fromTime, to: toTime }
+          }
+        },
         id: 1
       }],
       { headers: { 'X-Application': APP_KEY, 'X-Authentication': sessionToken, 'Content-Type': 'application/json' } }
@@ -1425,26 +1430,17 @@ router.get('/live/horse', async (req, res) => {
     let events = eventsResponse.data?.[0]?.result || [];
     if (!events.length) return res.status(200).json({ status: 'success', data: [], message: 'No races found' });
 
-    // Remove duplicate events
-    const seenEvents = new Set();
-    events = events.filter(e => {
-      if (seenEvents.has(e.event.id)) return false;
-      seenEvents.add(e.event.id);
-      return true;
-    });
-
+    // Step 2: Fetch Market Catalogue (WIN markets)
     const eventIds = events.map(e => e.event.id);
-
-    // Step 2: Fetch Market Catalogue (remove strict WIN filter)
     const marketCatalogueResponse = await axios.post(
       'https://api.betfair.com/exchange/betting/json-rpc/v1',
       [{
         jsonrpc: '2.0',
         method: 'SportsAPING/v1.0/listMarketCatalogue',
         params: {
-          filter: { eventIds },
+          filter: { eventTypeIds: ['7'], eventIds, marketTypeCodes: ['WIN'] },
           sort: 'FIRST_TO_START',
-          maxResults: '2000',
+          maxResults: 2000,
           marketProjection: ['EVENT', 'RUNNER_DESCRIPTION']
         },
         id: 2
@@ -1454,14 +1450,6 @@ router.get('/live/horse', async (req, res) => {
 
     let marketCatalogues = marketCatalogueResponse.data?.[0]?.result || [];
     if (!marketCatalogues.length) return res.status(200).json({ status: 'success', data: [], message: 'No markets found' });
-
-    // Remove duplicate markets
-    const seenMarkets = new Set();
-    marketCatalogues = marketCatalogues.filter(m => {
-      if (seenMarkets.has(m.marketId)) return false;
-      seenMarkets.add(m.marketId);
-      return true;
-    });
 
     const marketIds = marketCatalogues.map(m => m.marketId);
 
@@ -1486,7 +1474,6 @@ router.get('/live/horse', async (req, res) => {
       const book = marketBooks.find(b => b.marketId === market.marketId);
       if (!event || !book) continue;
 
-      // Only one market per race
       if (!raceMap.has(event.event.id)) {
         raceMap.set(event.event.id, {
           eventId: event.event.id,
@@ -1509,10 +1496,8 @@ router.get('/live/horse', async (req, res) => {
 
     let finalData = Array.from(raceMap.values()).sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
 
-    // Ensure at least 10 races (duplicate last ones if not enough)
-    while (finalData.length < 10 && finalData.length > 0) {
-      finalData.push(finalData[finalData.length - 1]);
-    }
+    // Limit to 15 races max
+    finalData = finalData.slice(0, 15);
 
     res.status(200).json({ status: 'success', count: finalData.length, data: finalData });
   } catch (err) {
