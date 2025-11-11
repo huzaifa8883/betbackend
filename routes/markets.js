@@ -1,6 +1,6 @@
 /**
  * Markets API Routes
- * Handles all market-related API endpoint
+ * Handles all market-related API endpoints
  */
 
 const { v4: uuidv4 } = require('uuid');
@@ -319,334 +319,6 @@ async function getMarketsFromBetfair(marketIds = []) {
     return [];
   }
 }
-async function betfairRpc(method, params) {
-  const sessionToken = await getSessionToken();
-  const res = await axios.post(
-    "https://api.betfair.com/exchange/betting/json-rpc/v1",
-    [
-      {
-        jsonrpc: "2.0",
-        method,
-        id: 1,
-        params,
-      },
-    ],
-    {
-      headers: {
-        "X-Application": APP_KEY,
-        "X-Authentication": sessionToken,
-        "Content-Type": "application/json",
-      },
-    }
-  );
-
-  if (res.data && res.data[0]) return res.data[0].result;
-  throw new Error("Invalid RPC response");
-}
-
-// =============================
-// ⚽ Route: /inplay/soccer
-// =============================
-router.get("/inplay/soccer", async (req, res) => {
-  try {
-    const sportId = 1;
-    const maxResults = 30;
-
-    const marketFilter = {
-      inPlayOnly: true, // ✅ Sirf in-play markets
-      eventTypeIds: [String(sportId)],
-      marketTypeCodes: ["MATCH_ODDS"],
-    };
-
-    const marketCatalogueParams = {
-      filter: marketFilter,
-      maxResults,
-      marketProjection: ["EVENT", "RUNNER_DESCRIPTION", "MARKET_START_TIME"],
-    };
-
-    const marketCatalogues = await betfairRpc(
-      "SportsAPING/v1.0/listMarketCatalogue",
-      marketCatalogueParams
-    );
-
-    const marketIds = marketCatalogues.map((m) => m.marketId);
-    if (marketIds.length === 0)
-      return res.json({ success: true, count: 0, markets: [] });
-
-    const marketBookParams = {
-      marketIds,
-      priceProjection: { priceData: ["EX_BEST_OFFERS"] },
-    };
-
-    const marketBooks = await betfairRpc(
-      "SportsAPING/v1.0/listMarketBook",
-      marketBookParams
-    );
-
-    // ✅ Combine and only keep live matches
-    const combined = marketCatalogues
-      .map((market) => {
-        const book = marketBooks.find((b) => b.marketId === market.marketId);
-        if (!book || !book.inplay) return null; // ❌ Skip if not live
-
-        const selections = (market.runners || []).map((runner) => {
-          const runnerBook = book.runners.find(
-            (r) => r.selectionId === runner.selectionId
-          );
-          return {
-            name: runner.runnerName,
-            back: runnerBook?.ex?.availableToBack?.[0] || {
-              price: "-",
-              size: "-",
-            },
-            lay: runnerBook?.ex?.availableToLay?.[0] || {
-              price: "-",
-              size: "-",
-            },
-          };
-        });
-
-        // 🕒 FIX: Convert start time properly
-        const formattedStartTime = market.marketStartTime
-          ? new Date(market.marketStartTime).toLocaleTimeString("en-GB", {
-              hour: "2-digit",
-              minute: "2-digit",
-            })
-          : new Date().toLocaleTimeString("en-GB", {
-              hour: "2-digit",
-              minute: "2-digit",
-            });
-
-        return {
-          marketId: market.marketId,
-          match: market.event.name,
-          startTime: formattedStartTime,
-          status: book.inplay ? "IN-PLAY" : book.status || "UNKNOWN", // ✅ Custom status
-          totalMatched: book.totalMatched || 0,
-          odds: {
-            back1: selections[0]?.back || { price: "-", size: "-" },
-            lay1: selections[0]?.lay || { price: "-", size: "-" },
-            backX: selections[1]?.back || { price: "-", size: "-" },
-            layX: selections[1]?.lay || { price: "-", size: "-" },
-            back2: selections[2]?.back || { price: "-", size: "-" },
-            lay2: selections[2]?.lay || { price: "-", size: "-" },
-          },
-        };
-      })
-      .filter(Boolean)
-      .slice(0, 5); // ✅ Limit to 5 live matches only
-
-    res.json({
-      success: true,
-      sport: "Soccer",
-      count: combined.length,
-      markets: combined,
-    });
-  } catch (err) {
-    console.error("❌ Error fetching soccer in-play:", err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-router.get("/inplay/cricket", async (req, res) => {
-  try {
-    const sportId = 4;
-    const maxResults = 30;
-
-    const marketFilter = {
-      inPlayOnly: true, // ✅ Sirf in-play markets
-      eventTypeIds: [String(sportId)],
-      marketTypeCodes: ["MATCH_ODDS"],
-    };
-
-    const marketCatalogueParams = {
-      filter: marketFilter,
-      maxResults,
-      marketProjection: ["EVENT", "RUNNER_DESCRIPTION", "MARKET_START_TIME"],
-    };
-
-    const marketCatalogues = await betfairRpc(
-      "SportsAPING/v1.0/listMarketCatalogue",
-      marketCatalogueParams
-    );
-
-    const marketIds = marketCatalogues.map((m) => m.marketId);
-    if (marketIds.length === 0)
-      return res.json({ success: true, count: 0, markets: [] });
-
-    const marketBookParams = {
-      marketIds,
-      priceProjection: { priceData: ["EX_BEST_OFFERS"] },
-    };
-
-    const marketBooks = await betfairRpc(
-      "SportsAPING/v1.0/listMarketBook",
-      marketBookParams
-    );
-
-    // ✅ Combine and only keep live matches
-    const combined = marketCatalogues
-      .map((market) => {
-        const book = marketBooks.find((b) => b.marketId === market.marketId);
-        if (!book || !book.inplay) return null; // ❌ Skip if not live
-
-        const selections = (market.runners || []).map((runner) => {
-          const runnerBook = book.runners.find(
-            (r) => r.selectionId === runner.selectionId
-          );
-          return {
-            name: runner.runnerName,
-            back: runnerBook?.ex?.availableToBack?.[0] || {
-              price: "-",
-              size: "-",
-            },
-            lay: runnerBook?.ex?.availableToLay?.[0] || {
-              price: "-",
-              size: "-",
-            },
-          };
-        });
-
-        // 🕒 FIX: proper startTime format
-        const formattedStartTime = market.marketStartTime
-          ? new Date(market.marketStartTime).toLocaleTimeString("en-GB", {
-              hour: "2-digit",
-              minute: "2-digit",
-            })
-          : new Date().toLocaleTimeString("en-GB", {
-              hour: "2-digit",
-              minute: "2-digit",
-            });
-
-        return {
-          marketId: market.marketId,
-          match: market.event.name,
-          startTime: formattedStartTime,
-          status: book.inplay ? "IN-PLAY" : book.status || "UNKNOWN",
-          totalMatched: book.totalMatched || 0,
-          odds: {
-            back1: selections[0]?.back || { price: "-", size: "-" },
-            lay1: selections[0]?.lay || { price: "-", size: "-" },
-            backX: selections[1]?.back || { price: "-", size: "-" },
-            layX: selections[1]?.lay || { price: "-", size: "-" },
-            back2: selections[2]?.back || { price: "-", size: "-" },
-            lay2: selections[2]?.lay || { price: "-", size: "-" },
-          },
-        };
-      })
-      .filter(Boolean)
-      .slice(0, 5); // ✅ Limit to 5 live matches only
-
-    res.json({
-      success: true,
-      sport: "cricket",
-      count: combined.length,
-      markets: combined,
-    });
-  } catch (err) {
-    console.error("❌ Error fetching cricket in-play:", err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-
-router.get("/inplay/tennis", async (req, res) => {
-  try {
-    const sportId = 2;
-    const maxResults = 30;
-
-    const marketFilter = {
-      inPlayOnly: true,
-      eventTypeIds: [String(sportId)],
-      marketTypeCodes: ["MATCH_ODDS"],
-    };
-
-    const marketCatalogueParams = {
-      filter: marketFilter,
-      maxResults,
-      marketProjection: ["EVENT", "RUNNER_DESCRIPTION", "MARKET_START_TIME"],
-    };
-
-    const marketCatalogues = await betfairRpc(
-      "SportsAPING/v1.0/listMarketCatalogue",
-      marketCatalogueParams
-    );
-
-    const marketIds = marketCatalogues.map((m) => m.marketId);
-    if (marketIds.length === 0)
-      return res.json({ success: true, count: 0, markets: [] });
-
-    const marketBookParams = {
-      marketIds,
-      priceProjection: { priceData: ["EX_BEST_OFFERS"] },
-    };
-
-    const marketBooks = await betfairRpc(
-      "SportsAPING/v1.0/listMarketBook",
-      marketBookParams
-    );
-
-    const combined = marketCatalogues
-      .map((market) => {
-        const book = marketBooks.find((b) => b.marketId === market.marketId);
-        if (!book || !book.inplay) return null;
-
-        const selections = (market.runners || []).map((runner) => {
-          const runnerBook = book.runners.find(
-            (r) => r.selectionId === runner.selectionId
-          );
-          return {
-            name: runner.runnerName,
-            back: runnerBook?.ex?.availableToBack?.[0] || {
-              price: "-",
-              size: "-",
-            },
-            lay: runnerBook?.ex?.availableToLay?.[0] || {
-              price: "-",
-              size: "-",
-            },
-          };
-        });
-
-        return {
-          marketId: market.marketId,
-          match: market.event.name,
-          startTime: market.marketStartTime
-            ? new Date(market.marketStartTime).toLocaleTimeString("en-GB", {
-                hour: "2-digit",
-                minute: "2-digit",
-              })
-            : new Date().toLocaleTimeString("en-GB", {
-                hour: "2-digit",
-                minute: "2-digit",
-              }),
-          status: book.inplay ? "IN-PLAY" : book.status || "UNKNOWN",
-          totalMatched: book.totalMatched || 0,
-          odds: {
-            back1: selections[0]?.back || { price: "-", size: "-" },
-            lay1: selections[0]?.lay || { price: "-", size: "-" },
-            backX: selections[1]?.back || { price: "-", size: "-" },
-            layX: selections[1]?.lay || { price: "-", size: "-" },
-            back2: selections[2]?.back || { price: "-", size: "-" },
-            lay2: selections[2]?.lay || { price: "-", size: "-" },
-          },
-        };
-      })
-      .filter(Boolean)
-      .slice(0, 5);
-
-    res.json({
-      success: true,
-      sport: "tennis",
-      count: combined.length,
-      markets: combined,
-    });
-  } catch (err) {
-    console.error("❌ Error fetching tennis in-play:", err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
 // 🎯 Fetch live cricket markets only
 router.get('/live/cricket', async (req, res) => {
   try {
@@ -1402,109 +1074,151 @@ router.get('/live/tennis', async (req, res) => {
 });
 
 
+
 router.get('/live/horse', async (req, res) => {
   try {
     const sessionToken = await getSessionToken();
 
-    // Wider range: now to next 12h (future races)
-    const fromTime = new Date().toISOString();
-    const toTime = new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString();
-
-    // Step 1: Fetch Horse Racing Events
+    // 🐎 Step 1: Get horse racing events
     const eventsResponse = await axios.post(
       'https://api.betfair.com/exchange/betting/json-rpc/v1',
-      [{
-        jsonrpc: '2.0',
-        method: 'SportsAPING/v1.0/listEvents',
-        params: {
-          filter: {
-            eventTypeIds: ['7'], // Horse Racing
-            marketStartTime: { from: fromTime, to: toTime }
-          }
-        },
-        id: 1
-      }],
-      { headers: { 'X-Application': APP_KEY, 'X-Authentication': sessionToken, 'Content-Type': 'application/json' } }
+      [
+        {
+          jsonrpc: '2.0',
+          method: 'SportsAPING/v1.0/listEvents',
+          params: {
+            filter: {
+              eventTypeIds: ['7'], // Horse Racing
+              // marketCountries: ['AU', 'GB'] // Optional: limit to AU & GB
+            }
+          },
+          id: 1
+        }
+      ],
+      {
+        headers: {
+          'X-Application': APP_KEY,
+          'X-Authentication': sessionToken,
+          'Content-Type': 'application/json'
+        }
+      }
     );
 
-    let events = eventsResponse.data?.[0]?.result || [];
-    if (!events.length) return res.status(200).json({ status: 'success', data: [], message: 'No races found' });
-
-    // Step 2: Fetch Market Catalogue (WIN markets)
+    const events = eventsResponse.data[0]?.result || [];
     const eventIds = events.map(e => e.event.id);
+
+    // 🐎 Step 2: Get market catalogue (WIN markets)
     const marketCatalogueResponse = await axios.post(
       'https://api.betfair.com/exchange/betting/json-rpc/v1',
-      [{
-        jsonrpc: '2.0',
-        method: 'SportsAPING/v1.0/listMarketCatalogue',
-        params: {
-          filter: { eventTypeIds: ['7'], eventIds, marketTypeCodes: ['WIN'] },
-          sort: 'FIRST_TO_START',
-          maxResults: 2000,
-          marketProjection: ['EVENT', 'RUNNER_DESCRIPTION']
-        },
-        id: 2
-      }],
-      { headers: { 'X-Application': APP_KEY, 'X-Authentication': sessionToken, 'Content-Type': 'application/json' } }
+      [
+        {
+          jsonrpc: '2.0',
+          method: 'SportsAPING/v1.0/listMarketCatalogue',
+          params: {
+            filter: {
+              eventIds: eventIds,
+              marketTypeCodes: ['WIN']
+            },
+            maxResults: '1000',
+            marketProjection: ['EVENT', 'RUNNER_METADATA']
+          },
+          id: 2
+        }
+      ],
+      {
+        headers: {
+          'X-Application': APP_KEY,
+          'X-Authentication': sessionToken,
+          'Content-Type': 'application/json'
+        }
+      }
     );
 
-    let marketCatalogues = marketCatalogueResponse.data?.[0]?.result || [];
-    if (!marketCatalogues.length) return res.status(200).json({ status: 'success', data: [], message: 'No markets found' });
-
+    const marketCatalogues = marketCatalogueResponse.data[0]?.result || [];
     const marketIds = marketCatalogues.map(m => m.marketId);
 
-    // Step 3: Fetch Market Books
+    // 🐎 Step 3: Get market books (odds + volume)
     const marketBookResponse = await axios.post(
       'https://api.betfair.com/exchange/betting/json-rpc/v1',
-      [{
-        jsonrpc: '2.0',
-        method: 'SportsAPING/v1.0/listMarketBook',
-        params: { marketIds, priceProjection: { priceData: ['EX_BEST_OFFERS'] } },
-        id: 3
-      }],
-      { headers: { 'X-Application': APP_KEY, 'X-Authentication': sessionToken, 'Content-Type': 'application/json' } }
+      [
+        {
+          jsonrpc: '2.0',
+          method: 'SportsAPING/v1.0/listMarketBook',
+          params: {
+            marketIds: marketIds,
+            priceProjection: {
+              priceData: ['EX_BEST_OFFERS']
+            }
+          },
+          id: 3
+        }
+      ],
+      {
+        headers: {
+          'X-Application': APP_KEY,
+          'X-Authentication': sessionToken,
+          'Content-Type': 'application/json'
+        }
+      }
     );
 
-    const marketBooks = marketBookResponse.data?.[0]?.result || [];
+    const marketBooks = marketBookResponse.data[0]?.result || [];
 
-    // Merge events + markets + odds
-    const raceMap = new Map();
-    for (const market of marketCatalogues) {
+    // 🔄 Combine event + market + odds data
+    let finalData = marketCatalogues.map(market => {
+      const matchingBook = marketBooks.find(b => b.marketId === market.marketId);
       const event = events.find(e => e.event.id === market.event.id);
-      const book = marketBooks.find(b => b.marketId === market.marketId);
-      if (!event || !book) continue;
 
-      if (!raceMap.has(event.event.id)) {
-        raceMap.set(event.event.id, {
-          eventId: event.event.id,
-          marketId: market.marketId,
-          match: event.event.name,
-          startTime: event.event.openDate,
-          marketStatus: book.status || 'UNKNOWN',
-          totalMatched: book.totalMatched || 0,
-          selections: (market.runners || []).map(runner => {
-            const runnerBook = book.runners?.find(r => r.selectionId === runner.selectionId);
-            return {
-              name: runner.runnerName,
-              back: runnerBook?.ex?.availableToBack?.slice(0, 3).map(b => ({ price: b.price, size: b.size })) || [],
-              lay: runnerBook?.ex?.availableToLay?.slice(0, 3).map(l => ({ price: l.price, size: l.size })) || []
-            };
-          })
-        });
-      }
-    }
+      return {
+        marketId: market.marketId,
+        match: event?.event.name,
+        startTime: event?.event.openDate,
+        marketStatus: matchingBook?.status || 'UNKNOWN',
+        totalMatched: matchingBook?.totalMatched || 0,
+        selections: market.runners.map(runner => {
+          const runnerBook = matchingBook?.runners.find(r => r.selectionId === runner.selectionId);
+          return {
+            name: runner.runnerName,
+            back: runnerBook?.ex?.availableToBack?.slice(0, 3).map(b => ({
+              price: b.price,
+              size: b.size
+            })) || [],
+            lay: runnerBook?.ex?.availableToLay?.slice(0, 3).map(l => ({
+              price: l.price,
+              size: l.size
+            })) || []
+          };
+        })
+      };
+    });
 
-    let finalData = Array.from(raceMap.values()).sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
+    // 📅 Sort by start time (ascending)
+    finalData.sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
 
-    // Limit to 15 races max
-    finalData = finalData.slice(0, 15);
+    // 🚫 Remove duplicates having same match name *and* same start time
+    finalData = finalData.filter(
+      (item, index, self) =>
+        index === self.findIndex(
+          t => t.match === item.match && t.startTime === item.startTime
+        )
+    );
 
-    res.status(200).json({ status: 'success', count: finalData.length, data: finalData });
+    // ✅ Final response
+    res.status(200).json({
+      status: 'success',
+      data: finalData
+    });
+
   } catch (err) {
-    console.error('❌ Horse Racing API Error:', err.response?.data || err.message);
-    res.status(500).json({ status: 'error', message: 'Failed to fetch horse racing odds', error: err.message });
+    console.error('❌ Horse Racing API Error:', err.message);
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to fetch horse racing odds',
+      error: err.message
+    });
   }
 });
+
 
 
 const sportMap = {
@@ -1958,7 +1672,7 @@ router.get('/live/greyhound', async (req, res) => {
   try {
     const sessionToken = await getSessionToken();
 
-    // 🐕 Step 1: Fetch greyhound events
+    // 🐕 Step 1: Get greyhound racing events
     const eventsResponse = await axios.post(
       'https://api.betfair.com/exchange/betting/json-rpc/v1',
       [
@@ -1968,7 +1682,10 @@ router.get('/live/greyhound', async (req, res) => {
           params: {
             filter: {
               eventTypeIds: ['4339'], // Greyhound Racing
-              marketStartTime: { from: new Date().toISOString() }
+              marketStartTime: {
+                from: new Date().toISOString()
+              },
+              // marketCountries: ['AU', 'GB'] // Optional: restrict to specific countries
             }
           },
           id: 1
@@ -1983,21 +1700,21 @@ router.get('/live/greyhound', async (req, res) => {
       }
     );
 
-    const events = eventsResponse?.data?.[0]?.result || [];
-    if (!events.length) {
-      return res.status(200).json({ status: 'success', message: 'No greyhound events found', data: [] });
-    }
+    const events = eventsResponse.data[0]?.result || [];
+    const eventIds = events.map(e => e.event.id);
 
-    const eventIds = events.map(e => e?.event?.id).filter(Boolean);
-
-    // 🐕 Step 2: Fetch market catalogues
-    const catalogueResponse = await axios.post(
+    // 🐕 Step 2: Get market catalogue (WIN markets)
+    const marketCatalogueResponse = await axios.post(
       'https://api.betfair.com/exchange/betting/json-rpc/v1',
       [
         {
           jsonrpc: '2.0',
           method: 'SportsAPING/v1.0/listMarketCatalogue',
           params: {
+            filter: {
+              eventIds: eventIds,
+              marketTypeCodes: ['WIN']
+            },
             maxResults: '1000',
             marketProjection: ['EVENT', 'RUNNER_METADATA']
           },
@@ -2013,31 +1730,21 @@ router.get('/live/greyhound', async (req, res) => {
       }
     );
 
-    let marketCatalogues = catalogueResponse?.data?.[0]?.result || [];
-
-    // ✅ Remove duplicates
-    const seen = new Set();
-    marketCatalogues = marketCatalogues.filter(m => {
-      if (!m.marketId || seen.has(m.marketId)) return false;
-      seen.add(m.marketId);
-      return true;
-    });
-
+    const marketCatalogues = marketCatalogueResponse.data[0]?.result || [];
     const marketIds = marketCatalogues.map(m => m.marketId);
-    if (!marketIds.length) {
-      return res.status(200).json({ status: 'success', message: 'No markets found', data: [] });
-    }
 
-    // 🐕 Step 3: Fetch market books (odds)
-    const bookResponse = await axios.post(
+    // 🐕 Step 3: Get market books (odds + volume)
+    const marketBookResponse = await axios.post(
       'https://api.betfair.com/exchange/betting/json-rpc/v1',
       [
         {
           jsonrpc: '2.0',
           method: 'SportsAPING/v1.0/listMarketBook',
           params: {
-            marketIds,
-            priceProjection: { priceData: ['EX_BEST_OFFERS'] }
+            marketIds: marketIds,
+            priceProjection: {
+              priceData: ['EX_BEST_OFFERS']
+            }
           },
           id: 3
         }
@@ -2051,24 +1758,30 @@ router.get('/live/greyhound', async (req, res) => {
       }
     );
 
-    const marketBooks = bookResponse?.data?.[0]?.result || [];
+    const marketBooks = marketBookResponse.data[0]?.result || [];
 
-    // 🔄 Combine data safely
-    const finalData = marketCatalogues.map(market => {
+    // 🔄 Combine data
+    let finalData = marketCatalogues.map(market => {
       const matchingBook = marketBooks.find(b => b.marketId === market.marketId);
-      const event = events.find(e => e?.event?.id === market?.event?.id);
+      const event = events.find(e => e.event.id === market.event.id);
 
       return {
         marketId: market.marketId,
-        match: event?.event?.name || 'Unknown Event',
-        startTime: event?.event?.openDate || 'N/A',
+        match: event?.event.name,
+        startTime: event?.event.openDate,
         totalMatched: matchingBook?.totalMatched || 0,
-        selections: (market.runners || []).map(runner => {
-          const runnerBook = matchingBook?.runners?.find(r => r.selectionId === runner.selectionId);
+        selections: market.runners.map(runner => {
+          const runnerBook = matchingBook?.runners.find(r => r.selectionId === runner.selectionId);
           return {
             name: runner.runnerName,
-            back: runnerBook?.ex?.availableToBack?.slice(0, 3).map(b => ({ price: b.price, size: b.size })) || [],
-            lay: runnerBook?.ex?.availableToLay?.slice(0, 3).map(l => ({ price: l.price, size: l.size })) || []
+            back: runnerBook?.ex?.availableToBack?.slice(0, 3).map(b => ({
+              price: b.price,
+              size: b.size
+            })) || [],
+            lay: runnerBook?.ex?.availableToLay?.slice(0, 3).map(l => ({
+              price: l.price,
+              size: l.size
+            })) || []
           };
         })
       };
@@ -2077,11 +1790,22 @@ router.get('/live/greyhound', async (req, res) => {
     // 📅 Sort by start time (ascending)
     finalData.sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
 
-    // ✅ Success
-    res.status(200).json({ status: 'success', count: finalData.length, data: finalData });
+    // 🚫 Remove duplicates having same match name *and* same start time
+    finalData = finalData.filter(
+      (item, index, self) =>
+        index === self.findIndex(
+          t => t.match === item.match && t.startTime === item.startTime
+        )
+    );
+
+    // ✅ Final response
+    res.status(200).json({
+      status: 'success',
+      data: finalData
+    });
 
   } catch (err) {
-    console.error('❌ Greyhound Racing API Error:', err?.response?.data || err.message);
+    console.error('❌ Greyhound Racing API Error:', err.message);
     res.status(500).json({
       status: 'error',
       message: 'Failed to fetch greyhound racing odds',
@@ -2089,7 +1813,6 @@ router.get('/live/greyhound', async (req, res) => {
     });
   }
 });
-
 
 
 router.get('/live/:sport', async(req, res) => {
@@ -2386,6 +2109,25 @@ module.exports  ={
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      
 
 
 
