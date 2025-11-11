@@ -1407,7 +1407,7 @@ router.get('/live/horse', async (req, res) => {
   try {
     const sessionToken = await getSessionToken();
 
-    // 🐎 Step 1: Fetch Horse Racing events
+    // 🐎 Step 1: Fetch Horse Racing Events
     const fromTime = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
     const eventsResponse = await axios.post(
       'https://api.betfair.com/exchange/betting/json-rpc/v1',
@@ -1441,7 +1441,6 @@ router.get('/live/horse', async (req, res) => {
       return res.status(200).json({ status: 'success', data: [], message: 'No racing found' });
 
     const eventIds = events.map(e => e.event.id);
-    console.log('Event IDs:', eventIds.slice(0, 10));
 
     // 🐎 Step 2: Market Catalogue
     const marketCatalogueResponse = await axios.post(
@@ -1454,7 +1453,7 @@ router.get('/live/horse', async (req, res) => {
             filter: {
               eventTypeIds: ['7'],
               eventIds,
-              marketTypeCodes: ['WIN'] // ensure we fetch race WIN markets
+              marketTypeCodes: ['WIN']
             },
             sort: 'FIRST_TO_START',
             maxResults: '1000',
@@ -1478,16 +1477,15 @@ router.get('/live/horse', async (req, res) => {
     if (!marketCatalogues.length)
       return res.status(200).json({ status: 'success', data: [], message: 'No markets found' });
 
-    // Remove duplicates
-    const seen = new Set();
+    // Remove duplicate marketIds (Betfair sometimes repeats)
+    const seenMarkets = new Set();
     marketCatalogues = marketCatalogues.filter(m => {
-      if (seen.has(m.marketId)) return false;
-      seen.add(m.marketId);
+      if (seenMarkets.has(m.marketId)) return false;
+      seenMarkets.add(m.marketId);
       return true;
     });
 
     const marketIds = marketCatalogues.map(m => m.marketId);
-    console.log(`🆔 Market IDs count: ${marketIds.length}`);
 
     // 🐎 Step 3: Market Books (odds)
     const marketBookResponse = await axios.post(
@@ -1515,16 +1513,22 @@ router.get('/live/horse', async (req, res) => {
     const marketBooks = marketBookResponse.data?.[0]?.result || [];
     console.log(`💰 Market books fetched: ${marketBooks.length}`);
 
-    // 🔄 Combine all
-    const finalData = marketCatalogues.map(market => {
-      const book = marketBooks.find(b => b.marketId === market.marketId);
-      const event = events.find(e => e.event.id === market.event.id);
+    // 🔄 Combine markets & group by eventId to avoid duplicate races
+    const raceMap = new Map();
 
-      return {
+    for (const market of marketCatalogues) {
+      const event = events.find(e => e.event.id === market.event.id);
+      const book = marketBooks.find(b => b.marketId === market.marketId);
+      if (!event) continue;
+
+      // Skip duplicate events (only keep one WIN market per race)
+      if (raceMap.has(event.event.id)) continue;
+
+      raceMap.set(event.event.id, {
+        eventId: event.event.id,
         marketId: market.marketId,
-        eventId: market.event.id,
-        match: market.event.name || event?.event?.name || 'Unknown Race',
-        startTime: market.event.openDate || event?.event?.openDate || 'N/A',
+        match: event.event.name || 'Unknown Race',
+        startTime: event.event.openDate || 'N/A',
         marketStatus: book?.status || 'UNKNOWN',
         totalMatched: book?.totalMatched || 0,
         selections: (market.runners || []).map(runner => {
@@ -1543,21 +1547,15 @@ router.get('/live/horse', async (req, res) => {
               })) || []
           };
         })
-      };
-    });
-
-    // 📅 Sort and remove duplicates by marketId + startTime
-    const uniqueData = [];
-    const seenKeys = new Set();
-    for (const item of finalData) {
-      const key = `${item.marketId}_${item.startTime}`;
-      if (!seenKeys.has(key)) {
-        seenKeys.add(key);
-        uniqueData.push(item);
-      }
+      });
     }
 
-    // ✅ Response
+    // Convert Map to array and sort by time
+    const uniqueData = Array.from(raceMap.values()).sort(
+      (a, b) => new Date(a.startTime) - new Date(b.startTime)
+    );
+
+    // ✅ Final response
     res.status(200).json({
       status: 'success',
       count: uniqueData.length,
@@ -1572,8 +1570,6 @@ router.get('/live/horse', async (req, res) => {
     });
   }
 });
-
-
 
 
 
