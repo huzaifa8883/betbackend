@@ -1406,10 +1406,11 @@ router.get('/live/horse', async (req, res) => {
   try {
     const sessionToken = await getSessionToken();
 
-    // 🐎 Step 1: Fetch Horse Racing Events (past 6 hrs to next 6 hrs for wider coverage)
-    const fromTime = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
-    const toTime = new Date(Date.now() + 6 * 60 * 60 * 1000).toISOString();
+    // 🕒 Wider range (past 12h to next 24h)
+    const fromTime = new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString();
+    const toTime = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
 
+    // 🐎 Step 1: Fetch Horse Racing Events (No country restriction)
     const eventsResponse = await axios.post(
       'https://api.betfair.com/exchange/betting/json-rpc/v1',
       [
@@ -1419,7 +1420,6 @@ router.get('/live/horse', async (req, res) => {
           params: {
             filter: {
               eventTypeIds: ['7'], // Horse Racing
-              marketCountries: ['GB', 'IE', 'AU'],
               marketStartTime: { from: fromTime, to: toTime }
             }
           },
@@ -1436,22 +1436,21 @@ router.get('/live/horse', async (req, res) => {
     );
 
     let events = eventsResponse.data?.[0]?.result || [];
-    console.log(`🐎 Events fetched: ${events.length}`);
+    console.log(`🐎 Total events fetched: ${events.length}`);
 
     if (!events.length)
-      return res.status(200).json({ status: 'success', data: [], message: 'No racing found' });
+      return res.status(200).json({ status: 'success', data: [], message: 'No races found' });
 
-    // Remove duplicate events by event.id or event.name
+    // Remove duplicates
     const seenEvents = new Set();
     events = events.filter(e => {
-      const key = e.event.id || e.event.name;
+      const key = e.event.id;
       if (seenEvents.has(key)) return false;
       seenEvents.add(key);
       return true;
     });
 
     const eventIds = events.map(e => e.event.id);
-    console.log(`✅ Unique events: ${events.length}`);
 
     // 🐎 Step 2: Fetch Market Catalogue (WIN markets)
     const marketCatalogueResponse = await axios.post(
@@ -1468,7 +1467,7 @@ router.get('/live/horse', async (req, res) => {
             },
             sort: 'FIRST_TO_START',
             maxResults: '2000',
-            marketProjection: ['EVENT', 'RUNNER_METADATA']
+            marketProjection: ['EVENT', 'RUNNER_DESCRIPTION']
           },
           id: 2
         }
@@ -1485,16 +1484,9 @@ router.get('/live/horse', async (req, res) => {
     let marketCatalogues = marketCatalogueResponse.data?.[0]?.result || [];
     console.log(`📊 Market catalogues fetched: ${marketCatalogues.length}`);
 
-    // Remove duplicate marketIds
-    const seenMarkets = new Set();
-    marketCatalogues = marketCatalogues.filter(m => {
-      if (seenMarkets.has(m.marketId)) return false;
-      seenMarkets.add(m.marketId);
-      return true;
-    });
+    const marketIds = marketCatalogues.map(m => m.marketId);
 
     // 🐎 Step 3: Fetch Market Books (odds)
-    const marketIds = marketCatalogues.map(m => m.marketId);
     const marketBookResponse = await axios.post(
       'https://api.betfair.com/exchange/betting/json-rpc/v1',
       [
@@ -1520,51 +1512,40 @@ router.get('/live/horse', async (req, res) => {
     const marketBooks = marketBookResponse.data?.[0]?.result || [];
     console.log(`💰 Market books fetched: ${marketBooks.length}`);
 
-    // 🔄 Combine + Ensure One Market Per Race
-    const raceMap = new Map();
-    for (const market of marketCatalogues) {
-      const event = events.find(e => e.event.id === market.event.id);
-      const book = marketBooks.find(b => b.marketId === market.marketId);
-      if (!event || !book) continue;
+    // 🔄 Merge events + markets + odds
+    const finalData = marketCatalogues
+      .map(market => {
+        const event = events.find(e => e.event.id === market.event.id);
+        const book = marketBooks.find(b => b.marketId === market.marketId);
+        if (!event || !book) return null;
 
-      if (raceMap.has(event.event.id)) continue; // skip duplicates
-
-      raceMap.set(event.event.id, {
-        eventId: event.event.id,
-        marketId: market.marketId,
-        match: event.event.name || 'Unknown Race',
-        startTime: event.event.openDate || 'N/A',
-        marketStatus: book.status || 'UNKNOWN',
-        totalMatched: book.totalMatched || 0,
-        selections: (market.runners || []).map(runner => {
-          const runnerBook = book.runners?.find(r => r.selectionId === runner.selectionId);
-          return {
-            name: runner.runnerName,
-            back:
-              runnerBook?.ex?.availableToBack?.slice(0, 3).map(b => ({
-                price: b.price,
-                size: b.size
-              })) || [],
-            lay:
-              runnerBook?.ex?.availableToLay?.slice(0, 3).map(l => ({
-                price: l.price,
-                size: l.size
-              })) || []
-          };
-        })
-      });
-    }
-
-    // Convert Map to Array and sort
-    let finalData = Array.from(raceMap.values()).sort(
-      (a, b) => new Date(a.startTime) - new Date(b.startTime)
-    );
-
-    // 🧩 Ensure minimum 10–12 races
-    if (finalData.length < 10) {
-      console.warn(`⚠️ Only ${finalData.length} races found, retrying with broader range...`);
-      finalData = finalData.concat(finalData.slice(0, 10 - finalData.length));
-    }
+        return {
+          eventId: event.event.id,
+          marketId: market.marketId,
+          match: event.event.name,
+          startTime: event.event.openDate,
+          marketStatus: book.status || 'UNKNOWN',
+          totalMatched: book.totalMatched || 0,
+          selections: (market.runners || []).map(runner => {
+            const runnerBook = book.runners?.find(r => r.selectionId === runner.selectionId);
+            return {
+              name: runner.runnerName,
+              back:
+                runnerBook?.ex?.availableToBack?.slice(0, 3).map(b => ({
+                  price: b.price,
+                  size: b.size
+                })) || [],
+              lay:
+                runnerBook?.ex?.availableToLay?.slice(0, 3).map(l => ({
+                  price: l.price,
+                  size: l.size
+                })) || []
+            };
+          })
+        };
+      })
+      .filter(Boolean)
+      .slice(0, 15); // Limit to 15 races
 
     res.status(200).json({
       status: 'success',
@@ -1580,8 +1561,6 @@ router.get('/live/horse', async (req, res) => {
     });
   }
 });
-
-
 
 
 const sportMap = {
