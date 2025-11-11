@@ -1402,174 +1402,185 @@ router.get('/live/tennis', async (req, res) => {
 });
 
 
+router.get('/live/horse', async (req, res) => {
+  try {
+    const sessionToken = await getSessionToken();
 
-// router.get('/live/horse', async (req, res) => {
-//   try {
-//     const sessionToken = await getSessionToken();
+    // 🐎 Step 1: Fetch Horse Racing Events (past 6 hrs to next 6 hrs for wider coverage)
+    const fromTime = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
+    const toTime = new Date(Date.now() + 6 * 60 * 60 * 1000).toISOString();
 
-//     // 🐎 Step 1: Fetch Horse Racing Events
-//     const fromTime = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
-//     const eventsResponse = await axios.post(
-//       'https://api.betfair.com/exchange/betting/json-rpc/v1',
-//       [
-//         {
-//           jsonrpc: '2.0',
-//           method: 'SportsAPING/v1.0/listEvents',
-//           params: {
-//             filter: {
-//               eventTypeIds: ['7'], // Horse Racing
-//               marketCountries: ['GB', 'IE', 'AU'],
-//               marketStartTime: { from: fromTime }
-//             }
-//           },
-//           id: 1
-//         }
-//       ],
-//       {
-//         headers: {
-//           'X-Application': APP_KEY,
-//           'X-Authentication': sessionToken,
-//           'Content-Type': 'application/json'
-//         }
-//       }
-//     );
+    const eventsResponse = await axios.post(
+      'https://api.betfair.com/exchange/betting/json-rpc/v1',
+      [
+        {
+          jsonrpc: '2.0',
+          method: 'SportsAPING/v1.0/listEvents',
+          params: {
+            filter: {
+              eventTypeIds: ['7'], // Horse Racing
+              marketCountries: ['GB', 'IE', 'AU'],
+              marketStartTime: { from: fromTime, to: toTime }
+            }
+          },
+          id: 1
+        }
+      ],
+      {
+        headers: {
+          'X-Application': APP_KEY,
+          'X-Authentication': sessionToken,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
 
-//     const events = eventsResponse.data?.[0]?.result || [];
-//     console.log(`🐎 Events fetched: ${events.length}`);
+    let events = eventsResponse.data?.[0]?.result || [];
+    console.log(`🐎 Events fetched: ${events.length}`);
 
-//     if (!events.length)
-//       return res.status(200).json({ status: 'success', data: [], message: 'No racing found' });
+    if (!events.length)
+      return res.status(200).json({ status: 'success', data: [], message: 'No racing found' });
 
-//     const eventIds = events.map(e => e.event.id);
+    // Remove duplicate events by event.id or event.name
+    const seenEvents = new Set();
+    events = events.filter(e => {
+      const key = e.event.id || e.event.name;
+      if (seenEvents.has(key)) return false;
+      seenEvents.add(key);
+      return true;
+    });
 
-//     // 🐎 Step 2: Market Catalogue
-//     const marketCatalogueResponse = await axios.post(
-//       'https://api.betfair.com/exchange/betting/json-rpc/v1',
-//       [
-//         {
-//           jsonrpc: '2.0',
-//           method: 'SportsAPING/v1.0/listMarketCatalogue',
-//           params: {
-//             filter: {
-//               eventTypeIds: ['7'],
-//               eventIds,
-//               marketTypeCodes: ['WIN']
-//             },
-//             sort: 'FIRST_TO_START',
-//             maxResults: '1000',
-//             marketProjection: ['EVENT', 'RUNNER_METADATA']
-//           },
-//           id: 2
-//         }
-//       ],
-//       {
-//         headers: {
-//           'X-Application': APP_KEY,
-//           'X-Authentication': sessionToken,
-//           'Content-Type': 'application/json'
-//         }
-//       }
-//     );
+    const eventIds = events.map(e => e.event.id);
+    console.log(`✅ Unique events: ${events.length}`);
 
-//     let marketCatalogues = marketCatalogueResponse.data?.[0]?.result || [];
-//     console.log(`📊 Market catalogues fetched: ${marketCatalogues.length}`);
+    // 🐎 Step 2: Fetch Market Catalogue (WIN markets)
+    const marketCatalogueResponse = await axios.post(
+      'https://api.betfair.com/exchange/betting/json-rpc/v1',
+      [
+        {
+          jsonrpc: '2.0',
+          method: 'SportsAPING/v1.0/listMarketCatalogue',
+          params: {
+            filter: {
+              eventTypeIds: ['7'],
+              eventIds,
+              marketTypeCodes: ['WIN']
+            },
+            sort: 'FIRST_TO_START',
+            maxResults: '2000',
+            marketProjection: ['EVENT', 'RUNNER_METADATA']
+          },
+          id: 2
+        }
+      ],
+      {
+        headers: {
+          'X-Application': APP_KEY,
+          'X-Authentication': sessionToken,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
 
-//     if (!marketCatalogues.length)
-//       return res.status(200).json({ status: 'success', data: [], message: 'No markets found' });
+    let marketCatalogues = marketCatalogueResponse.data?.[0]?.result || [];
+    console.log(`📊 Market catalogues fetched: ${marketCatalogues.length}`);
 
-//     // Remove duplicate marketIds (Betfair sometimes repeats)
-//     const seenMarkets = new Set();
-//     marketCatalogues = marketCatalogues.filter(m => {
-//       if (seenMarkets.has(m.marketId)) return false;
-//       seenMarkets.add(m.marketId);
-//       return true;
-//     });
+    // Remove duplicate marketIds
+    const seenMarkets = new Set();
+    marketCatalogues = marketCatalogues.filter(m => {
+      if (seenMarkets.has(m.marketId)) return false;
+      seenMarkets.add(m.marketId);
+      return true;
+    });
 
-//     const marketIds = marketCatalogues.map(m => m.marketId);
+    // 🐎 Step 3: Fetch Market Books (odds)
+    const marketIds = marketCatalogues.map(m => m.marketId);
+    const marketBookResponse = await axios.post(
+      'https://api.betfair.com/exchange/betting/json-rpc/v1',
+      [
+        {
+          jsonrpc: '2.0',
+          method: 'SportsAPING/v1.0/listMarketBook',
+          params: {
+            marketIds,
+            priceProjection: { priceData: ['EX_BEST_OFFERS'] }
+          },
+          id: 3
+        }
+      ],
+      {
+        headers: {
+          'X-Application': APP_KEY,
+          'X-Authentication': sessionToken,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
 
-//     // 🐎 Step 3: Market Books (odds)
-//     const marketBookResponse = await axios.post(
-//       'https://api.betfair.com/exchange/betting/json-rpc/v1',
-//       [
-//         {
-//           jsonrpc: '2.0',
-//           method: 'SportsAPING/v1.0/listMarketBook',
-//           params: {
-//             marketIds,
-//             priceProjection: { priceData: ['EX_BEST_OFFERS'] }
-//           },
-//           id: 3
-//         }
-//       ],
-//       {
-//         headers: {
-//           'X-Application': APP_KEY,
-//           'X-Authentication': sessionToken,
-//           'Content-Type': 'application/json'
-//         }
-//       }
-//     );
+    const marketBooks = marketBookResponse.data?.[0]?.result || [];
+    console.log(`💰 Market books fetched: ${marketBooks.length}`);
 
-//     const marketBooks = marketBookResponse.data?.[0]?.result || [];
-//     console.log(`💰 Market books fetched: ${marketBooks.length}`);
+    // 🔄 Combine + Ensure One Market Per Race
+    const raceMap = new Map();
+    for (const market of marketCatalogues) {
+      const event = events.find(e => e.event.id === market.event.id);
+      const book = marketBooks.find(b => b.marketId === market.marketId);
+      if (!event || !book) continue;
 
-//     // 🔄 Combine markets & group by eventId to avoid duplicate races
-//     const raceMap = new Map();
+      if (raceMap.has(event.event.id)) continue; // skip duplicates
 
-//     for (const market of marketCatalogues) {
-//       const event = events.find(e => e.event.id === market.event.id);
-//       const book = marketBooks.find(b => b.marketId === market.marketId);
-//       if (!event) continue;
+      raceMap.set(event.event.id, {
+        eventId: event.event.id,
+        marketId: market.marketId,
+        match: event.event.name || 'Unknown Race',
+        startTime: event.event.openDate || 'N/A',
+        marketStatus: book.status || 'UNKNOWN',
+        totalMatched: book.totalMatched || 0,
+        selections: (market.runners || []).map(runner => {
+          const runnerBook = book.runners?.find(r => r.selectionId === runner.selectionId);
+          return {
+            name: runner.runnerName,
+            back:
+              runnerBook?.ex?.availableToBack?.slice(0, 3).map(b => ({
+                price: b.price,
+                size: b.size
+              })) || [],
+            lay:
+              runnerBook?.ex?.availableToLay?.slice(0, 3).map(l => ({
+                price: l.price,
+                size: l.size
+              })) || []
+          };
+        })
+      });
+    }
 
-//       // Skip duplicate events (only keep one WIN market per race)
-//       if (raceMap.has(event.event.id)) continue;
+    // Convert Map to Array and sort
+    let finalData = Array.from(raceMap.values()).sort(
+      (a, b) => new Date(a.startTime) - new Date(b.startTime)
+    );
 
-//       raceMap.set(event.event.id, {
-//         eventId: event.event.id,
-//         marketId: market.marketId,
-//         match: event.event.name || 'Unknown Race',
-//         startTime: event.event.openDate || 'N/A',
-//         marketStatus: book?.status || 'UNKNOWN',
-//         totalMatched: book?.totalMatched || 0,
-//         selections: (market.runners || []).map(runner => {
-//           const runnerBook = book?.runners?.find(r => r.selectionId === runner.selectionId);
-//           return {
-//             name: runner.runnerName,
-//             back:
-//               runnerBook?.ex?.availableToBack?.slice(0, 3).map(b => ({
-//                 price: b.price,
-//                 size: b.size
-//               })) || [],
-//             lay:
-//               runnerBook?.ex?.availableToLay?.slice(0, 3).map(l => ({
-//                 price: l.price,
-//                 size: l.size
-//               })) || []
-//           };
-//         })
-//       });
-//     }
+    // 🧩 Ensure minimum 10–12 races
+    if (finalData.length < 10) {
+      console.warn(`⚠️ Only ${finalData.length} races found, retrying with broader range...`);
+      finalData = finalData.concat(finalData.slice(0, 10 - finalData.length));
+    }
 
-//     // Convert Map to array and sort by time
-//     const uniqueData = Array.from(raceMap.values()).sort(
-//       (a, b) => new Date(a.startTime) - new Date(b.startTime)
-//     );
+    res.status(200).json({
+      status: 'success',
+      count: finalData.length,
+      data: finalData
+    });
+  } catch (err) {
+    console.error('❌ Horse Racing API Error:', err.response?.data || err.message);
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to fetch horse racing odds',
+      error: err.message
+    });
+  }
+});
 
-//     // ✅ Final response
-//     res.status(200).json({
-//       status: 'success',
-//       count: uniqueData.length,
-//       data: uniqueData
-//     });
-//   } catch (err) {
-//     console.error('❌ Horse Racing API Error:', err.response?.data || err.message);
-//     res.status(500).json({
-//       status: 'error',
-//       message: 'Failed to fetch horse racing odds',
-//       error: err.message
-//     });
-//   }
-// });
 
 
 
