@@ -1074,13 +1074,12 @@ router.get('/live/tennis', async (req, res) => {
 });
 
 
-
 router.get('/live/horse', async (req, res) => {
   try {
     const sessionToken = await getSessionToken();
 
-    // 🐎 Step 1: Get horse racing events
-    const eventsResponse = await axios.post(
+    // 🐎 1) Get Horse Racing Events
+    const eventsRes = await axios.post(
       'https://api.betfair.com/exchange/betting/json-rpc/v1',
       [
         {
@@ -1088,8 +1087,7 @@ router.get('/live/horse', async (req, res) => {
           method: 'SportsAPING/v1.0/listEvents',
           params: {
             filter: {
-              eventTypeIds: ['7'], // Horse Racing
-              // marketCountries: ['AU', 'GB'] // Optional: limit to AU & GB
+              eventTypeIds: ['7']  // Horse Racing
             }
           },
           id: 1
@@ -1104,11 +1102,15 @@ router.get('/live/horse', async (req, res) => {
       }
     );
 
-    const events = eventsResponse.data[0]?.result || [];
+    const events = eventsRes.data?.[0]?.result || [];
     const eventIds = events.map(e => e.event.id);
 
-    // 🐎 Step 2: Get market catalogue (WIN markets)
-    const marketCatalogueResponse = await axios.post(
+    if (eventIds.length === 0) {
+      return res.json({ status: "success", data: [] });
+    }
+
+    // 🐎 2) Get Market Catalogue (WIN Markets)
+    const marketCatRes = await axios.post(
       'https://api.betfair.com/exchange/betting/json-rpc/v1',
       [
         {
@@ -1134,11 +1136,15 @@ router.get('/live/horse', async (req, res) => {
       }
     );
 
-    const marketCatalogues = marketCatalogueResponse.data[0]?.result || [];
-    const marketIds = marketCatalogues.map(m => m.marketId);
+    const catalogues = marketCatRes.data?.[0]?.result || [];
+    const marketIds = catalogues.map(m => m.marketId);
 
-    // 🐎 Step 3: Get market books (odds + volume)
-    const marketBookResponse = await axios.post(
+    if (marketIds.length === 0) {
+      return res.json({ status: "success", data: [] });
+    }
+
+    // 🐎 3) Get Market Books (Odds)
+    const marketBookRes = await axios.post(
       'https://api.betfair.com/exchange/betting/json-rpc/v1',
       [
         {
@@ -1146,9 +1152,7 @@ router.get('/live/horse', async (req, res) => {
           method: 'SportsAPING/v1.0/listMarketBook',
           params: {
             marketIds: marketIds,
-            priceProjection: {
-              priceData: ['EX_BEST_OFFERS']
-            }
+            priceProjection: { priceData: ['EX_BEST_OFFERS'] }
           },
           id: 3
         }
@@ -1162,62 +1166,46 @@ router.get('/live/horse', async (req, res) => {
       }
     );
 
-    const marketBooks = marketBookResponse.data[0]?.result || [];
+    const books = marketBookRes.data?.[0]?.result || [];
 
-    // 🔄 Combine event + market + odds data
-    let finalData = marketCatalogues.map(market => {
-      const matchingBook = marketBooks.find(b => b.marketId === market.marketId);
-      const event = events.find(e => e.event.id === market.event.id);
+    // 🧩 Merge All Data
+    let final = catalogues.map(cat => {
+      const book = books.find(b => b.marketId === cat.marketId);
+      const event = events.find(e => e.event.id === cat.event.id);
 
       return {
-        marketId: market.marketId,
-        match: event?.event.name,
-        startTime: event?.event.openDate,
-        marketStatus: matchingBook?.status || 'UNKNOWN',
-        totalMatched: matchingBook?.totalMatched || 0,
-        selections: market.runners.map(runner => {
-          const runnerBook = matchingBook?.runners.find(r => r.selectionId === runner.selectionId);
+        marketId: cat.marketId,
+        match: event?.event?.name || "",
+        startTime: event?.event?.openDate || "",
+        marketStatus: book?.status || "UNKNOWN",
+        totalMatched: book?.totalMatched || 0,
+        selections: cat.runners.map(r => {
+          const rb = book?.runners.find(x => x.selectionId === r.selectionId);
           return {
-            name: runner.runnerName,
-            back: runnerBook?.ex?.availableToBack?.slice(0, 3).map(b => ({
-              price: b.price,
-              size: b.size
-            })) || [],
-            lay: runnerBook?.ex?.availableToLay?.slice(0, 3).map(l => ({
-              price: l.price,
-              size: l.size
-            })) || []
+            name: r.runnerName,
+            back: rb?.ex?.availableToBack?.slice(0, 3) || [],
+            lay: rb?.ex?.availableToLay?.slice(0, 3) || []
           };
         })
       };
     });
 
-    // 📅 Sort by start time (ascending)
-    finalData.sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
+    // 🕒 Sort by event start time
+    final.sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
 
-    // 🚫 Remove duplicates having same match name *and* same start time
-    finalData = finalData.filter(
-      (item, index, self) =>
-        index === self.findIndex(
-          t => t.match === item.match && t.startTime === item.startTime
-        )
-    );
-
-    // ✅ Final response
-    res.status(200).json({
-      status: 'success',
-      data: finalData
-    });
+    // Return response
+    res.json({ status: "success", data: final });
 
   } catch (err) {
-    console.error('❌ Horse Racing API Error:', err.message);
+    console.error("❌ Horse Racing API Error:", err);
     res.status(500).json({
-      status: 'error',
-      message: 'Failed to fetch horse racing odds',
+      status: "error",
+      message: "Failed to fetch horse racing odds",
       error: err.message
     });
   }
 });
+
 
 
 
