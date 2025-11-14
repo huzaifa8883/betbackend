@@ -1078,7 +1078,7 @@ router.get('/live/horse', async (req, res) => {
   try {
     const sessionToken = await getSessionToken();
 
-    // 🐎 1) Get Horse Racing Events
+    // 🐎 1) Get Horse Racing Events (Australia + UK + Ireland)
     const eventsRes = await axios.post(
       'https://api.betfair.com/exchange/betting/json-rpc/v1',
       [
@@ -1087,7 +1087,8 @@ router.get('/live/horse', async (req, res) => {
           method: 'SportsAPING/v1.0/listEvents',
           params: {
             filter: {
-              eventTypeIds: ['7']  // Horse Racing
+              eventTypeIds: ['7'],      // Horse Racing
+              marketCountries: ['AU','GB','IE','FR','US','NZ','SG']  
             }
           },
           id: 1
@@ -1106,10 +1107,11 @@ router.get('/live/horse', async (req, res) => {
     const eventIds = events.map(e => e.event.id);
 
     if (eventIds.length === 0) {
+      console.log("⚠ No horse racing events found");
       return res.json({ status: "success", data: [] });
     }
 
-    // 🐎 2) Get Market Catalogue (WIN Markets)
+    // 🐎 2) Market Catalogue (WIN)
     const marketCatRes = await axios.post(
       'https://api.betfair.com/exchange/betting/json-rpc/v1',
       [
@@ -1118,11 +1120,11 @@ router.get('/live/horse', async (req, res) => {
           method: 'SportsAPING/v1.0/listMarketCatalogue',
           params: {
             filter: {
-              eventIds: eventIds,
+              eventIds,
               marketTypeCodes: ['WIN']
             },
-            maxResults: '1000',
-            marketProjection: ['EVENT', 'RUNNER_METADATA']
+            maxResults: '2000',
+            marketProjection: ['EVENT','RUNNER_METADATA']
           },
           id: 2
         }
@@ -1140,10 +1142,11 @@ router.get('/live/horse', async (req, res) => {
     const marketIds = catalogues.map(m => m.marketId);
 
     if (marketIds.length === 0) {
+      console.log("⚠ No WIN markets found for these events");
       return res.json({ status: "success", data: [] });
     }
 
-    // 🐎 3) Get Market Books (Odds)
+    // 🐎 3) Market Books (Odds)
     const marketBookRes = await axios.post(
       'https://api.betfair.com/exchange/betting/json-rpc/v1',
       [
@@ -1151,7 +1154,7 @@ router.get('/live/horse', async (req, res) => {
           jsonrpc: '2.0',
           method: 'SportsAPING/v1.0/listMarketBook',
           params: {
-            marketIds: marketIds,
+            marketIds,
             priceProjection: { priceData: ['EX_BEST_OFFERS'] }
           },
           id: 3
@@ -1168,8 +1171,8 @@ router.get('/live/horse', async (req, res) => {
 
     const books = marketBookRes.data?.[0]?.result || [];
 
-    // 🧩 Merge All Data
-    let final = catalogues.map(cat => {
+    // 🧩 Merge
+    const final = catalogues.map(cat => {
       const book = books.find(b => b.marketId === cat.marketId);
       const event = events.find(e => e.event.id === cat.event.id);
 
@@ -1177,10 +1180,10 @@ router.get('/live/horse', async (req, res) => {
         marketId: cat.marketId,
         match: event?.event?.name || "",
         startTime: event?.event?.openDate || "",
-        marketStatus: book?.status || "UNKNOWN",
+        marketStatus: book?.status || "CLOSED",
         totalMatched: book?.totalMatched || 0,
         selections: cat.runners.map(r => {
-          const rb = book?.runners.find(x => x.selectionId === r.selectionId);
+          const rb = book?.runners?.find(x => x.selectionId === r.selectionId);
           return {
             name: r.runnerName,
             back: rb?.ex?.availableToBack?.slice(0, 3) || [],
@@ -1190,14 +1193,12 @@ router.get('/live/horse', async (req, res) => {
       };
     });
 
-    // 🕒 Sort by event start time
     final.sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
 
-    // Return response
     res.json({ status: "success", data: final });
 
   } catch (err) {
-    console.error("❌ Horse Racing API Error:", err);
+    console.log("❌ ERROR Horse:", err.response?.data || err.message);
     res.status(500).json({
       status: "error",
       message: "Failed to fetch horse racing odds",
@@ -1205,7 +1206,6 @@ router.get('/live/horse', async (req, res) => {
     });
   }
 });
-
 
 
 
