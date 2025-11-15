@@ -970,6 +970,32 @@ async function recalculateUserLiableAndPnL(userId) {
   });
 }
 
+async function refreshPendingOrders(userId, marketId, runnerData) {
+  const usersCollection = getUsersCollection();
+  const user = await usersCollection.findOne({ _id: new ObjectId(userId) });
+  if (!user) return;
+
+  const pendingOrders = (user.orders || []).filter(o => o.status === "PENDING" && o.marketId === marketId);
+
+  for (let order of pendingOrders) {
+    const runner = runnerData.find(r => r.selectionId === order.selectionId);
+    if (!runner) continue;
+
+    const { matchedSize, status, executedPrice } = checkMatch(order, runner);
+
+    if (status === "MATCHED") {
+      await usersCollection.updateOne(
+        { _id: new ObjectId(userId), "orders.requestId": order.requestId },
+        { $set: { "orders.$.matched": matchedSize, "orders.$.status": status, "orders.$.price": executedPrice, "orders.$.updated_at": new Date() } }
+      );
+
+      global.io.to("match_" + marketId).emit("ordersUpdated", {
+        userId,
+        newOrders: [{ ...order, matched: matchedSize, status, price: executedPrice }]
+      });
+    }
+  }
+}
 
 /* ------------------------------ SETTLEMENT ------------------------------ */
 async function settleEventBets(eventId, winningSelectionId) {
