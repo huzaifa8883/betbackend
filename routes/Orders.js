@@ -263,35 +263,33 @@ async function getMarketBookFromBetfair(marketId, selectionId) {
 /* ---------------- Matching Engine ---------------- */
 function checkMatch(order, runner) {
   let matchedSize = 0;
-  let status = "UNMATCHED";
+  let status = "PENDING"; // <-- changed from UNMATCHED
   let executedPrice = order.price;
 
   const backs = runner.ex.availableToBack || [];
   const lays = runner.ex.availableToLay || [];
 
   if (order.type === "BACK" && backs.length > 0) {
-    // Sabse bara back odd (highest)
+    // Highest back price
     const highestBack = Math.max(...backs.map(b => b.price));
 
     if (highestBack >= order.price) {
       executedPrice = highestBack;
-      matchedSize = order.size; // abhi full match (partial ka size check add kar sakte)
+      matchedSize = order.size; // full match for now
       status = "MATCHED";
     } else {
-      status = "UNMATCHED";
+      status = "PENDING"; // <-- changed
     }
-  }
-
-  else if (order.type === "LAY" && lays.length > 0) {
-    // Sabse chhota lay odd (lowest)
-    const lowestLay = Math.min(...lays.map(l => l.price));
+  } else if (order.type === "LAY" && lays.length > 0) {
+    // Lowest lay price
+    const lowestLay = Math.min(...lays.map(b => b.price));
 
     if (lowestLay <= order.price) {
       executedPrice = lowestLay;
       matchedSize = order.size;
       status = "MATCHED";
     } else {
-      status = "UNMATCHED";
+      status = "PENDING"; // <-- changed
     }
   }
 
@@ -890,7 +888,7 @@ async function recalculateUserLiableAndPnL(userId) {
   const allOrders = user.orders || [];
 
   const activeOrders = allOrders.filter(o =>
-    ["PENDING", "UNMATCHED", "MATCHED"].includes(o.status)
+    ["PENDING", "MATCHED"].includes(o.status)
   );
 
   if (activeOrders.length === 0) {
