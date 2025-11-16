@@ -1093,7 +1093,18 @@ async function settleEventBets(eventId, winningSelectionId) {
 
 
 
+setInterval(async () => {
+  const users = await getUsersCollection().find({}).toArray();
+  for (const user of users) {
+    const pendingOrders = (user.orders || []).filter(o => o.status === "PENDING");
+    const markets = [...new Set(pendingOrders.map(o => o.marketId))];
 
+    for (const marketId of markets) {
+      const runners = await getMarketBookFromBetfair(marketId); // all runners in this market
+      await refreshPendingOrders(user._id, marketId, runners);
+    }
+  }
+}, 1000); // check every 1 second
 
 
 // track order
@@ -1331,5 +1342,4 @@ router.get("/with-category", authMiddleware(), async (req, res) => {
 module.exports = {
   router,
   settleEventBets,
-  refreshPendingOrders
 };
