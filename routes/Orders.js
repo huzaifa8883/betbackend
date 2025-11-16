@@ -262,49 +262,45 @@ async function getMarketBookFromBetfair(marketId, selectionId) {
 
 /* ---------------- Matching Engine ---------------- */
 function checkMatch(order, runner) {
-  let matchedSize = order.matched || 0; // pehle se matched consider karo
-  let status = order.status || "PENDING";
+  let matchedSize = order.matched || 0;
+  let status = "PENDING";
   let executedPrice = order.price;
+  let remaining = order.size - matchedSize;
 
-  const backs = runner.ex.availableToBack || [];
-  const lays = runner.ex.availableToLay || [];
+  const backs = runner.ex.availableToBack || [];  // Log jo BACK pe bet laga rahe
+  const lays = runner.ex.availableToLay || [];    // Log jo LAY pe bet laga rahe
 
-  if (order.type === "BACK" && backs.length > 0) {
-    const sorted = [...backs].sort((a, b) => b.price - a.price);
-    let remaining = order.size - matchedSize; // remaining size
-
-    for (const level of sorted) {
-      if (level.price >= order.price && remaining > 0) {
-        const fill = Math.min(remaining, level.size);
+  if (order.type === "BACK" && lays.length > 0) {
+    // BACK bet → LAY prices se match hoga
+    const sortedLays = [...lays].sort((a, b) => a.price - b.price); // Chhota pehle
+    for (const lay of sortedLays) {
+      if (lay.price <= order.price && remaining > 0) {  // LAY price ≤ tumhara BACK price
+        const fill = Math.min(remaining, lay.size);
         matchedSize += fill;
         remaining -= fill;
-        executedPrice = level.price;
+        executedPrice = lay.price;
       }
     }
-  } 
-  else if (order.type === "LAY" && lays.length > 0) {
-    const sorted = [...lays].sort((a, b) => a.price - b.price);
-    let remaining = order.size - matchedSize;
-
-    for (const level of sorted) {
-      if (level.price <= order.price && remaining > 0) {
-        const fill = Math.min(remaining, level.size);
+  }
+  else if (order.type === "LAY" && backs.length > 0) {
+    // LAY bet → BACK prices se match hoga
+    const sortedBacks = [...backs].sort((a, b) => b.price - a.price); // Ooncha pehle
+    for (const back of sortedBacks) {
+      if (back.price >= order.price && remaining > 0) {  // BACK price ≥ tumhara LAY price
+        const fill = Math.min(remaining, back.size);
         matchedSize += fill;
         remaining -= fill;
-        executedPrice = level.price;
+        executedPrice = back.price;
       }
     }
   }
 
-  if (matchedSize > 0) {
-    status = matchedSize >= order.size ? "MATCHED" : "PARTIALLY_MATCHED";
-  } else {
-    status = "PENDING";
-  }
+  if (matchedSize >= order.size) status = "MATCHED";
+  else if (matchedSize > 0) status = "PARTIALLY_MATCHED";
+  else status = "PENDING";
 
   return { matchedSize, status, executedPrice };
 }
-
 
 
 
