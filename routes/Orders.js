@@ -262,8 +262,8 @@ async function getMarketBookFromBetfair(marketId, selectionId) {
 
 /* ---------------- Matching Engine ---------------- */
 function checkMatch(order, runner) {
-  let matchedSize = 0;
-  let status = "PENDING";
+  let matchedSize = order.matched || 0; // pehle se matched consider karo
+  let status = order.status || "PENDING";
   let executedPrice = order.price;
 
   const backs = runner.ex.availableToBack || [];
@@ -271,7 +271,7 @@ function checkMatch(order, runner) {
 
   if (order.type === "BACK" && backs.length > 0) {
     const sorted = [...backs].sort((a, b) => b.price - a.price);
-    let remaining = order.size;
+    let remaining = order.size - matchedSize; // remaining size
 
     for (const level of sorted) {
       if (level.price >= order.price && remaining > 0) {
@@ -284,7 +284,7 @@ function checkMatch(order, runner) {
   } 
   else if (order.type === "LAY" && lays.length > 0) {
     const sorted = [...lays].sort((a, b) => a.price - b.price);
-    let remaining = order.size;
+    let remaining = order.size - matchedSize;
 
     for (const level of sorted) {
       if (level.price <= order.price && remaining > 0) {
@@ -298,6 +298,8 @@ function checkMatch(order, runner) {
 
   if (matchedSize > 0) {
     status = matchedSize >= order.size ? "MATCHED" : "PARTIALLY_MATCHED";
+  } else {
+    status = "PENDING";
   }
 
   return { matchedSize, status, executedPrice };
@@ -985,22 +987,30 @@ async function refreshPendingOrders(userId, marketId, runnerData) {
   const pendingOrders = (user.orders || []).filter(o => o.status === "PENDING" && o.marketId === marketId);
 
   for (let order of pendingOrders) {
-    const runner = runnerData.find(r => r.selectionId === order.selectionId);
-    if (!runner) continue;
+  const runner = runnerData.find(r => r.selectionId === order.selectionId);
+  if (!runner) continue;
 
-    const { matchedSize, status, executedPrice } = checkMatch(order, runner);
+  const { matchedSize, status, executedPrice } = checkMatch(order, runner);
 
-    if (status === "MATCHED") {
-      await usersCollection.updateOne(
-        { _id: new ObjectId(userId), "orders.requestId": order.requestId },
-        { $set: { "orders.$.matched": matchedSize, "orders.$.status": status, "orders.$.price": executedPrice, "orders.$.updated_at": new Date() } }
-      );
-
-      global.io.to("match_" + marketId).emit("ordersUpdated", {
-        userId,
-        newOrders: [{ ...order, matched: matchedSize, status, price: executedPrice }]
-      });
+  // Always update DB regardless of previous status
+  await usersCollection.updateOne(
+    { _id: new ObjectId(userId), "orders.requestId": order.requestId },
+    {
+      $set: {
+        "orders.$.matched": matchedSize,
+        "orders.$.status": status,
+        "orders.$.price": executedPrice,
+        "orders.$.updated_at": new Date()
+      }
     }
+  );
+
+  global.io.to("match_" + marketId).emit("ordersUpdated", {
+    userId,
+    newOrders: [{ ...order, matched: matchedSize, status, price: executedPrice }]
+  });
+}
+
   }
 }
 
