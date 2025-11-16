@@ -8,6 +8,8 @@ const bodyParser = require('body-parser');
 const config = require('./config');
 // const { settleBetsForClosedEvents } = require('./routes/Orders');
 const { updateMarkets } = require('./routes/markets');
+const { startMarketPolling } = require('./routes/Orders');
+
 const app = express();
 const server = http.createServer(app);
 
@@ -51,7 +53,7 @@ app.use(cors({
 
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
-
+startMarketPolling(); // Start polling
 /* ---------------- MongoDB ---------------- */
 const MONGODB_URI = process.env.MONGODB_URI ||
   'mongodb+srv://huzaifa:huzaifa56567@cluster0.owmq7.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0';
