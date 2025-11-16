@@ -263,18 +263,17 @@ async function getMarketBookFromBetfair(marketId, selectionId) {
 /* ---------------- Matching Engine ---------------- */
 function checkMatch(order, runner) {
   let matchedSize = order.matched || 0;
-  let status = "PENDING";
+  let status = "PENDING"; // Default
   let executedPrice = order.price;
   let remaining = order.size - matchedSize;
 
-  const backs = runner.ex.availableToBack || [];  // Log jo BACK pe bet laga rahe
-  const lays = runner.ex.availableToLay || [];    // Log jo LAY pe bet laga rahe
+  const backs = runner.ex.availableToBack || [];
+  const lays = runner.ex.availableToLay || [];
 
   if (order.type === "BACK" && lays.length > 0) {
-    // BACK bet → LAY prices se match hoga
     const sortedLays = [...lays].sort((a, b) => a.price - b.price); // Chhota pehle
     for (const lay of sortedLays) {
-      if (lay.price <= order.price && remaining > 0) {  // LAY price ≤ tumhara BACK price
+      if (lay.price <= order.price && remaining > 0) {
         const fill = Math.min(remaining, lay.size);
         matchedSize += fill;
         remaining -= fill;
@@ -283,10 +282,9 @@ function checkMatch(order, runner) {
     }
   }
   else if (order.type === "LAY" && backs.length > 0) {
-    // LAY bet → BACK prices se match hoga
     const sortedBacks = [...backs].sort((a, b) => b.price - a.price); // Ooncha pehle
     for (const back of sortedBacks) {
-      if (back.price >= order.price && remaining > 0) {  // BACK price ≥ tumhara LAY price
+      if (back.price >= order.price && remaining > 0) {
         const fill = Math.min(remaining, back.size);
         matchedSize += fill;
         remaining -= fill;
@@ -295,13 +293,15 @@ function checkMatch(order, runner) {
     }
   }
 
-  if (matchedSize >= order.size) status = "MATCHED";
-  else if (matchedSize > 0) status = "PARTIALLY_MATCHED";
-  else status = "PENDING";
+  // Agar kuch bhi match hua → MATCHED
+  if (matchedSize > 0) {
+    status = "MATCHED";
+  } else {
+    status = "PENDING";
+  }
 
   return { matchedSize, status, executedPrice };
 }
-
 
 
 // GET /orders/event
