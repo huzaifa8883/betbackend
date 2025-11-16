@@ -263,34 +263,41 @@ async function getMarketBookFromBetfair(marketId, selectionId) {
 /* ---------------- Matching Engine ---------------- */
 function checkMatch(order, runner) {
   let matchedSize = 0;
-  let status = "PENDING"; // <-- changed from UNMATCHED
+  let status = "PENDING";
   let executedPrice = order.price;
 
   const backs = runner.ex.availableToBack || [];
   const lays = runner.ex.availableToLay || [];
 
   if (order.type === "BACK" && backs.length > 0) {
-    // Highest back price
-    const highestBack = Math.max(...backs.map(b => b.price));
+    const sorted = [...backs].sort((a, b) => b.price - a.price);
+    let remaining = order.size;
 
-    if (highestBack >= order.price) {
-      executedPrice = highestBack;
-      matchedSize = order.size; // full match for now
-      status = "MATCHED";
-    } else {
-      status = "PENDING"; // <-- changed
+    for (const level of sorted) {
+      if (level.price >= order.price && remaining > 0) {
+        const fill = Math.min(remaining, level.size);
+        matchedSize += fill;
+        remaining -= fill;
+        executedPrice = level.price;
+      }
     }
-  } else if (order.type === "LAY" && lays.length > 0) {
-    // Lowest lay price
-    const lowestLay = Math.min(...lays.map(b => b.price));
+  } 
+  else if (order.type === "LAY" && lays.length > 0) {
+    const sorted = [...lays].sort((a, b) => a.price - b.price);
+    let remaining = order.size;
 
-    if (lowestLay <= order.price) {
-      executedPrice = lowestLay;
-      matchedSize = order.size;
-      status = "MATCHED";
-    } else {
-      status = "PENDING"; // <-- changed
+    for (const level of sorted) {
+      if (level.price <= order.price && remaining > 0) {
+        const fill = Math.min(remaining, level.size);
+        matchedSize += fill;
+        remaining -= fill;
+        executedPrice = level.price;
+      }
     }
+  }
+
+  if (matchedSize > 0) {
+    status = matchedSize >= order.size ? "MATCHED" : "PARTIALLY_MATCHED";
   }
 
   return { matchedSize, status, executedPrice };
@@ -1093,19 +1100,49 @@ async function settleEventBets(eventId, winningSelectionId) {
 
 
 
-setInterval(async () => {
-  const users = await getUsersCollection().find({}).toArray();
-  for (const user of users) {
-    const pendingOrders = (user.orders || []).filter(o => o.status === "PENDING");
-    const markets = [...new Set(pendingOrders.map(o => o.marketId))];
+function startMarketPolling() {
+  const POLL_INTERVAL = 5000; // 5 seconds
 
-    for (const marketId of markets) {
-      const runners = await getMarketBookFromBetfair(marketId); // all runners in this market
-      await refreshPendingOrders(user._id, marketId, runners);
+  setInterval(async () => {
+    try {
+      const activeMarketsCollection = getActiveMarketsCollection();
+      const active = await activeMarketsCollection.find({ hasPending: true }).toArray();
+      if (active.length === 0) return;
+
+      for (const { marketId } of active) {
+        const marketBook = await getMarketBookFromBetfair(marketId);
+        if (!marketBook?.runners) continue;
+
+        const usersCollection = getUsersCollection();
+        const usersWithPending = await usersCollection
+          .aggregate([
+            { $match: { "orders.marketId": marketId, "orders.status": { $in: ["PENDING", "PARTIALLY_MATCHED"] } } },
+            { $project: { _id: 1 } }
+          ])
+          .toArray();
+
+        for (const { _id } of usersWithPending) {
+          await refreshPendingOrders(_id.toString(), marketId, marketBook.runners);
+        }
+
+        // Cleanup: if no pending, mark inactive
+        const stillPending = await usersCollection.countDocuments({
+          "orders.marketId": marketId,
+          "orders.status": { $in: ["PENDING", "PARTIALLY_MATCHED"] }
+        });
+
+        if (stillPending === 0) {
+          await activeMarketsCollection.updateOne(
+            { marketId },
+            { $set: { hasPending: false } }
+          );
+        }
+      }
+    } catch (err) {
+      console.error("Polling error:", err);
     }
-  }
-}, 1000); // check every 1 second
-
+  }, POLL_INTERVAL);
+}
 
 // track order
 // PATCH /orders/request/:requestId
@@ -1342,4 +1379,5 @@ router.get("/with-category", authMiddleware(), async (req, res) => {
 module.exports = {
   router,
   settleEventBets,
+  startMarketPolling
 };
