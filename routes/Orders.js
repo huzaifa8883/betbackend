@@ -263,42 +263,53 @@ async function getMarketBookFromBetfair(marketId, selectionId) {
 /* ---------------- Matching Engine ---------------- */
 function checkMatch(order, runner) {
   let matchedSize = order.matched || 0;
-  let status = "PENDING"; // Default
-  let executedPrice = order.price;
+  let status = "PENDING";
+  let executedPrice = parseFloat(order.price);
   let remaining = order.size - matchedSize;
 
-  const backs = runner.ex.availableToBack || [];
-  const lays = runner.ex.availableToLay || [];
+  // SAFELY extract and parse data
+  const rawBacks = runner.ex?.availableToBack || [];
+  const rawLays = runner.ex?.availableToLay || [];
+
+  const backs = rawBacks
+    .map(b => ({ price: parseFloat(b.price), size: parseFloat(b.size) }))
+    .filter(b => !isNaN(b.price) && !isNaN(b.size) && b.size > 0);
+
+  const lays = rawLays
+    .map(l => ({ price: parseFloat(l.price), size: parseFloat(l.size) }))
+    .filter(l => !isNaN(l.price) && !isNaN(l.size) && l.size > 0);
+
+  // LOG FOR DEBUG
+  console.log("ORDER:", { type: order.type, price: executedPrice, size: order.size });
+  console.log("BACKS:", backs);
+  console.log("LAYS:", lays);
 
   if (order.type === "BACK" && lays.length > 0) {
     const sortedLays = [...lays].sort((a, b) => a.price - b.price); // Chhota pehle
     for (const lay of sortedLays) {
-      if (lay.price <= order.price && remaining > 0) {
+      if (lay.price <= executedPrice && remaining > 0) {
         const fill = Math.min(remaining, lay.size);
         matchedSize += fill;
         remaining -= fill;
         executedPrice = lay.price;
+        console.log("BACK MATCHED:", fill, "@", lay.price);
       }
     }
   }
   else if (order.type === "LAY" && backs.length > 0) {
     const sortedBacks = [...backs].sort((a, b) => b.price - a.price); // Ooncha pehle
     for (const back of sortedBacks) {
-      if (back.price >= order.price && remaining > 0) {
+      if (back.price >= executedPrice && remaining > 0) {
         const fill = Math.min(remaining, back.size);
         matchedSize += fill;
         remaining -= fill;
         executedPrice = back.price;
+        console.log("LAY MATCHED:", fill, "@", back.price);
       }
     }
   }
 
-  // Agar kuch bhi match hua → MATCHED
-  if (matchedSize > 0) {
-    status = "MATCHED";
-  } else {
-    status = "PENDING";
-  }
+  status = matchedSize > 0 ? "MATCHED" : "PENDING";
 
   return { matchedSize, status, executedPrice };
 }
