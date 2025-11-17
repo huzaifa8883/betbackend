@@ -261,6 +261,38 @@ async function getMarketBookFromBetfair(marketId, selectionId) {
 }
 
 /* ---------------- Matching Engine ---------------- */
+// function checkMatch(order, runner) {
+//   let status = "PENDING";
+//   let executedPrice = parseFloat(order.price);
+
+//   const rawBacks = runner.ex?.availableToBack || [];
+//   const rawLays = runner.ex?.availableToLay || [];
+
+//   const backs = rawBacks.map(b => ({ price: parseFloat(b.price), size: parseFloat(b.size) }))
+//                         .filter(b => !isNaN(b.price) && !isNaN(b.size) && b.size > 0);
+//   const lays = rawLays.map(l => ({ price: parseFloat(l.price), size: parseFloat(l.size) }))
+//                       .filter(l => !isNaN(l.price) && !isNaN(l.size) && l.size > 0);
+
+//   if (order.type === "BACK") {
+//     // BACK bet ke liye availableToBack me eligible odds check
+//     const eligibleBacks = backs.filter(b => b.price >= executedPrice);
+//     if (eligibleBacks.length > 0) {
+//       // MATCHED → max eligible odd
+//       executedPrice = Math.max(...eligibleBacks.map(b => b.price));
+//       status = "MATCHED";
+//     }
+//   } else if (order.type === "LAY") {
+//     // LAY bet ke liye availableToLay me eligible odds check
+//     const eligibleLays = lays.filter(l => l.price <= executedPrice);
+//     if (eligibleLays.length > 0) {
+//       // MATCHED → min eligible odd
+//       executedPrice = Math.min(...eligibleLays.map(l => l.price));
+//       status = "MATCHED";
+//     }
+//   }
+
+//   return { matchedSize: status === "MATCHED" ? order.size : 0, status, executedPrice };
+// }
 function checkMatch(order, runner) {
   let status = "PENDING";
   let executedPrice = parseFloat(order.price);
@@ -268,30 +300,58 @@ function checkMatch(order, runner) {
   const rawBacks = runner.ex?.availableToBack || [];
   const rawLays = runner.ex?.availableToLay || [];
 
-  const backs = rawBacks.map(b => ({ price: parseFloat(b.price), size: parseFloat(b.size) }))
-                        .filter(b => !isNaN(b.price) && !isNaN(b.size) && b.size > 0);
-  const lays = rawLays.map(l => ({ price: parseFloat(l.price), size: parseFloat(l.size) }))
-                      .filter(l => !isNaN(l.price) && !isNaN(l.size) && l.size > 0);
+  const backs = rawBacks.map(b => parseFloat(b.price)).filter(p => !isNaN(p));
+  const lays  = rawLays.map(l => parseFloat(l.price)).filter(p => !isNaN(p));
 
   if (order.type === "BACK") {
-    // BACK bet ke liye availableToBack me eligible odds check
-    const eligibleBacks = backs.filter(b => b.price >= executedPrice);
-    if (eligibleBacks.length > 0) {
-      // MATCHED → max eligible odd
-      executedPrice = Math.max(...eligibleBacks.map(b => b.price));
-      status = "MATCHED";
+
+    const minBack = Math.min(...backs);
+    const maxBack = Math.max(...backs);
+
+    // Rule: user odd < min available → PENDING
+    if (executedPrice < minBack) {
+      status = "PENDING";
     }
-  } else if (order.type === "LAY") {
-    // LAY bet ke liye availableToLay me eligible odds check
-    const eligibleLays = lays.filter(l => l.price <= executedPrice);
-    if (eligibleLays.length > 0) {
-      // MATCHED → min eligible odd
-      executedPrice = Math.min(...eligibleLays.map(l => l.price));
+    // Rule: user odd > max available → MATCHED at maxBack
+    else if (executedPrice > maxBack) {
+      status = "MATCHED";
+      executedPrice = maxBack;
+    }
+    // Otherwise in between → MATCHED at closest available >= userOdd
+    else {
+      const eligible = backs.filter(p => p >= executedPrice);
+      executedPrice = Math.min(...eligible);
       status = "MATCHED";
     }
   }
 
-  return { matchedSize: status === "MATCHED" ? order.size : 0, status, executedPrice };
+  else if (order.type === "LAY") {
+
+    const minLay = Math.min(...lays);
+    const maxLay = Math.max(...lays);
+
+    // Rule: user odd > max available → PENDING
+    if (executedPrice > maxLay) {
+      status = "PENDING";
+    }
+    // Rule: user odd < min available → MATCHED at minLay
+    else if (executedPrice < minLay) {
+      status = "MATCHED";
+      executedPrice = minLay;
+    }
+    // Otherwise in between → MATCHED at closest available <= userOdd
+    else {
+      const eligible = lays.filter(p => p <= executedPrice);
+      executedPrice = Math.max(...eligible);
+      status = "MATCHED";
+    }
+  }
+
+  return {
+    matchedSize: status === "MATCHED" ? order.size : 0,
+    status,
+    executedPrice
+  };
 }
 
 
