@@ -1711,7 +1711,7 @@ router.get('/live/greyhound', async (req, res) => {
               eventIds: eventIds,
               marketTypeCodes: ['WIN']
             },
-            maxResults: '1000',
+            maxResults: '10000',
             marketProjection: ['EVENT', 'RUNNER_METADATA']
           },
           id: 2
