@@ -1027,64 +1027,50 @@ async function recalculateUserLiableAndPnL(userId) {
   });
 }
 
-async function refreshPendingOrders() {
+async function refreshPendingOrders(userId, marketId, runnerData) {
   try {
-    const users = await getUsersCollection().find({}).toArray();
+    const usersCollection = getUsersCollection();
+    const user = await usersCollection.findOne({ _id: new ObjectId(userId) });
 
-    for (const user of users) {
-      const pendingOrders = (user.orders || []).filter(o => o.status === "PENDING");
+    if (!user) return;
 
-      if (pendingOrders.length === 0) continue;
+    const pendingOrders = (user.orders || []).filter(
+      o => o.status === "PENDING" && o.marketId === marketId
+    );
 
-      // Markets list
-      const markets = [...new Set(pendingOrders.map(o => o.marketId))];
+    if (pendingOrders.length === 0) return;
 
-      for (const marketId of markets) {
+    for (const order of pendingOrders) {
+      const runner = runnerData.find(r => r.selectionId === order.selectionId);
+      if (!runner) continue;
 
-        // Get fresh market book
-        const marketData = await getMarketBookFromBetfair(marketId);
-        if (!marketData || !marketData[0] || !marketData[0].runners) continue;
+      const { matchedSize, status, executedPrice } = checkMatch(order, runner);
 
-        const runners = marketData[0].runners;
+      order.matched = matchedSize;
+      order.status = status;
+      order.price = executedPrice;
 
-        for (const order of pendingOrders.filter(o => o.marketId === marketId)) {
-
-          const runner = runners.find(r => r.selectionId === order.selectionId);
-          if (!runner) continue;
-
-          // Run checkMatch logic
-          const { matchedSize, status, executedPrice } = checkMatch(order, runner);
-
-          // Update order object in-place so next iteration uses correct values
-          order.matched = matchedSize;
-          order.status = status;
-          order.price = executedPrice;
-
-          // Emit updated order to frontend
-          global.io.to("match_" + marketId).emit("ordersUpdated", {
-            userId: user._id.toString(),
-            newOrders: [{
-              ...order,
-              matched: matchedSize,
-              status,
-              price: executedPrice
-            }]
-          });
-
-        }
-
-        // persist all updated orders for this user
-        await getUsersCollection().updateOne(
-          { _id: user._id },
-          { $set: { orders: user.orders } }
-        );
-      }
+      global.io.to("match_" + marketId).emit("ordersUpdated", {
+        userId,
+        newOrders: [{
+          ...order,
+          matched: matchedSize,
+          status,
+          price: executedPrice
+        }]
+      });
     }
 
+    await usersCollection.updateOne(
+      { _id: new ObjectId(userId) },
+      { $set: { orders: user.orders } }
+    );
+
   } catch (err) {
-    console.error("Error in refreshPendingOrders:", err);
+    console.error("refreshPendingOrders error:", err);
   }
 }
+
 
 
 /* ------------------------------ SETTLEMENT ------------------------------ */
