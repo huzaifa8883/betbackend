@@ -1078,7 +1078,7 @@ router.get('/live/horse', async (req, res) => {
   try {
     const sessionToken = await getSessionToken();
 
-    // 🐎 1) Get Horse Racing Events (Australia + UK + Ireland)
+    // 🐎 1) Get Horse Racing Events (AU + UK + IE + FR + US + NZ + SG)
     const eventsRes = await axios.post(
       'https://api.betfair.com/exchange/betting/json-rpc/v1',
       [
@@ -1087,8 +1087,8 @@ router.get('/live/horse', async (req, res) => {
           method: 'SportsAPING/v1.0/listEvents',
           params: {
             filter: {
-              eventTypeIds: ['7'],      // Horse Racing
-              marketCountries: ['AU','GB','IE','FR','US','NZ','SG']  
+              eventTypeIds: ['7'],
+              marketCountries: ['AU','GB','IE','FR','US','NZ','SG']
             }
           },
           id: 1
@@ -1104,12 +1104,12 @@ router.get('/live/horse', async (req, res) => {
     );
 
     const events = eventsRes.data?.[0]?.result || [];
-    const eventIds = events.map(e => e.event.id);
-
-    if (eventIds.length === 0) {
-      console.log("⚠ No horse racing events found");
+    if (!events.length) {
+      console.log("⚠ No horse racing events found, retrying...");
       return res.json({ status: "success", data: [] });
     }
+
+    const eventIds = events.map(e => e.event.id);
 
     // 🐎 2) Market Catalogue (WIN)
     const marketCatRes = await axios.post(
@@ -1121,7 +1121,7 @@ router.get('/live/horse', async (req, res) => {
           params: {
             filter: {
               eventIds,
-              marketTypeCodes: ['WIN']
+              marketTypeCodes: ['WIN','PLACE'] // include PLACE for more data
             },
             maxResults: '2000',
             marketProjection: ['EVENT','RUNNER_METADATA']
@@ -1139,12 +1139,12 @@ router.get('/live/horse', async (req, res) => {
     );
 
     const catalogues = marketCatRes.data?.[0]?.result || [];
-    const marketIds = catalogues.map(m => m.marketId);
-
-    if (marketIds.length === 0) {
-      console.log("⚠ No WIN markets found for these events");
+    if (!catalogues.length) {
+      console.log("⚠ No markets found for events, retrying...");
       return res.json({ status: "success", data: [] });
     }
+
+    const marketIds = catalogues.map(m => m.marketId);
 
     // 🐎 3) Market Books (Odds)
     const marketBookRes = await axios.post(
@@ -1171,7 +1171,7 @@ router.get('/live/horse', async (req, res) => {
 
     const books = marketBookRes.data?.[0]?.result || [];
 
-    // 🧩 Merge
+    // 🧩 Merge events + catalogue + market book
     const final = catalogues.map(cat => {
       const book = books.find(b => b.marketId === cat.marketId);
       const event = events.find(e => e.event.id === cat.event.id);
@@ -1194,6 +1194,21 @@ router.get('/live/horse', async (req, res) => {
     });
 
     final.sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
+
+    // 🟢 Agar koi race nahi milti, placeholder bhej do
+    if (!final.length) {
+      return res.json({
+        status: "success",
+        data: [{
+          marketId: "0",
+          match: "No live races",
+          startTime: new Date(),
+          marketStatus: "CLOSED",
+          totalMatched: 0,
+          selections: []
+        }]
+      });
+    }
 
     res.json({ status: "success", data: final });
 
