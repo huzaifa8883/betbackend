@@ -262,57 +262,38 @@ async function getMarketBookFromBetfair(marketId, selectionId) {
 
 /* ---------------- Matching Engine ---------------- */
 function checkMatch(order, runner) {
-  let matchedSize = order.matched || 0;
   let status = "PENDING";
   let executedPrice = parseFloat(order.price);
-  let remaining = order.size - matchedSize;
 
-  // SAFELY extract and parse data
   const rawBacks = runner.ex?.availableToBack || [];
   const rawLays = runner.ex?.availableToLay || [];
 
-  const backs = rawBacks
-    .map(b => ({ price: parseFloat(b.price), size: parseFloat(b.size) }))
-    .filter(b => !isNaN(b.price) && !isNaN(b.size) && b.size > 0);
+  const backs = rawBacks.map(b => ({ price: parseFloat(b.price), size: parseFloat(b.size) }))
+                        .filter(b => !isNaN(b.price) && !isNaN(b.size) && b.size > 0);
+  const lays = rawLays.map(l => ({ price: parseFloat(l.price), size: parseFloat(l.size) }))
+                      .filter(l => !isNaN(l.price) && !isNaN(l.size) && l.size > 0);
 
-  const lays = rawLays
-    .map(l => ({ price: parseFloat(l.price), size: parseFloat(l.size) }))
-    .filter(l => !isNaN(l.price) && !isNaN(l.size) && l.size > 0);
-
-  // LOG FOR DEBUG
-  console.log("ORDER:", { type: order.type, price: executedPrice, size: order.size });
-  console.log("BACKS:", backs);
-  console.log("LAYS:", lays);
-
-  if (order.type === "BACK" && lays.length > 0) {
-    const sortedLays = [...lays].sort((a, b) => a.price - b.price); // Chhota pehle
-    for (const lay of sortedLays) {
-      if (lay.price <= executedPrice && remaining > 0) {
-        const fill = Math.min(remaining, lay.size);
-        matchedSize += fill;
-        remaining -= fill;
-        executedPrice = lay.price;
-        console.log("BACK MATCHED:", fill, "@", lay.price);
-      }
+  if (order.type === "BACK") {
+    // BACK bet ke liye availableToBack me eligible odds check
+    const eligibleBacks = backs.filter(b => b.price >= executedPrice);
+    if (eligibleBacks.length > 0) {
+      // MATCHED → max eligible odd
+      executedPrice = Math.max(...eligibleBacks.map(b => b.price));
+      status = "MATCHED";
     }
-  }
-  else if (order.type === "LAY" && backs.length > 0) {
-    const sortedBacks = [...backs].sort((a, b) => b.price - a.price); // Ooncha pehle
-    for (const back of sortedBacks) {
-      if (back.price >= executedPrice && remaining > 0) {
-        const fill = Math.min(remaining, back.size);
-        matchedSize += fill;
-        remaining -= fill;
-        executedPrice = back.price;
-        console.log("LAY MATCHED:", fill, "@", back.price);
-      }
+  } else if (order.type === "LAY") {
+    // LAY bet ke liye availableToLay me eligible odds check
+    const eligibleLays = lays.filter(l => l.price <= executedPrice);
+    if (eligibleLays.length > 0) {
+      // MATCHED → min eligible odd
+      executedPrice = Math.min(...eligibleLays.map(l => l.price));
+      status = "MATCHED";
     }
   }
 
-  status = matchedSize > 0 ? "MATCHED" : "PENDING";
-
-  return { matchedSize, status, executedPrice };
+  return { matchedSize: status === "MATCHED" ? order.size : 0, status, executedPrice };
 }
+
 
 
 // GET /orders/event
