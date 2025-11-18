@@ -1696,12 +1696,11 @@ router.get('/Navigation', async (req, res) => {
 
 // Ab express.listen ki jagah server.listen
 
-
 router.get('/live/greyhound', async (req, res) => {
   try {
     const sessionToken = await getSessionToken();
 
-    // 🐕 Step 1: Get greyhound racing events (last 3 hours + upcoming)
+    // 🐕 Step 1: Fetch greyhound events
     const eventsResponse = await axios.post(
       'https://api.betfair.com/exchange/betting/json-rpc/v1',
       [
@@ -1711,10 +1710,7 @@ router.get('/live/greyhound', async (req, res) => {
           params: {
             filter: {
               eventTypeIds: ['4339'], // Greyhound Racing
-              marketCountries: ['GB', 'IE', 'AU'],
-              marketStartTime: {
-                from: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString()
-              }
+              marketStartTime: { from: new Date().toISOString() }
             }
           },
           id: 1
@@ -1729,27 +1725,22 @@ router.get('/live/greyhound', async (req, res) => {
       }
     );
 
-    const events = eventsResponse.data[0]?.result || [];
-    console.log(`🐕 Greyhound racing events found: ${events.length}`);
+    const events = eventsResponse?.data?.[0]?.result || [];
     if (!events.length) {
-      return res.status(200).json({
-        status: 'success',
-        message: 'No racing found',
-        data: []
-      });
+      return res.status(200).json({ status: 'success', message: 'No greyhound events found', data: [] });
     }
 
-    const eventIds = events.map(e => e.event.id);
+    const eventIds = events.map(e => e?.event?.id).filter(Boolean);
 
-    // 🐕 Step 2: Get market catalogue (WIN markets)
-    const marketCatalogueResponse = await axios.post(
+    // 🐕 Step 2: Fetch market catalogues
+    const catalogueResponse = await axios.post(
       'https://api.betfair.com/exchange/betting/json-rpc/v1',
       [
         {
           jsonrpc: '2.0',
           method: 'SportsAPING/v1.0/listMarketCatalogue',
           params: {
-            filter: { eventIds },
+            filter: { eventIds, marketTypeCodes: ['WIN'] },
             maxResults: '1000',
             marketProjection: ['EVENT', 'RUNNER_METADATA']
           },
@@ -1765,28 +1756,23 @@ router.get('/live/greyhound', async (req, res) => {
       }
     );
 
-    let marketCatalogues = marketCatalogueResponse.data[0]?.result || [];
-    console.log(`📊 Market catalogues found: ${marketCatalogues.length}`);
-    if (!marketCatalogues.length) {
-      return res.status(200).json({
-        status: 'success',
-        message: 'No markets found',
-        data: []
-      });
-    }
+    let marketCatalogues = catalogueResponse?.data?.[0]?.result || [];
 
-    // ✅ Remove duplicate markets by marketId
-    const seenMarketIds = new Set();
-    marketCatalogues = marketCatalogues.filter(market => {
-      if (seenMarketIds.has(market.marketId)) return false;
-      seenMarketIds.add(market.marketId);
+    // ✅ Remove duplicates
+    const seen = new Set();
+    marketCatalogues = marketCatalogues.filter(m => {
+      if (!m.marketId || seen.has(m.marketId)) return false;
+      seen.add(m.marketId);
       return true;
     });
 
     const marketIds = marketCatalogues.map(m => m.marketId);
+    if (!marketIds.length) {
+      return res.status(200).json({ status: 'success', message: 'No markets found', data: [] });
+    }
 
-    // 🐕 Step 3: Get market books
-    const marketBookResponse = await axios.post(
+    // 🐕 Step 3: Fetch market books (odds)
+    const bookResponse = await axios.post(
       'https://api.betfair.com/exchange/betting/json-rpc/v1',
       [
         {
@@ -1808,53 +1794,37 @@ router.get('/live/greyhound', async (req, res) => {
       }
     );
 
-    const marketBooks = marketBookResponse.data[0]?.result || [];
-    console.log(`💰 Market books found: ${marketBooks.length}`);
+    const marketBooks = bookResponse?.data?.[0]?.result || [];
 
-    // 🔄 Combine event + market + odds data
-    let finalData = marketCatalogues.map(market => {
+    // 🔄 Combine data safely
+    const finalData = marketCatalogues.map(market => {
       const matchingBook = marketBooks.find(b => b.marketId === market.marketId);
-      const event = events.find(e => e.event.id === market.event.id);
+      const event = events.find(e => e?.event?.id === market?.event?.id);
 
       return {
         marketId: market.marketId,
-        match: event?.event.name || 'Unknown Event',
-        startTime: event?.event.openDate || 'N/A',
-        marketStatus: matchingBook?.status || 'UNKNOWN',
+        match: event?.event?.name || 'Unknown Event',
+        startTime: event?.event?.openDate || 'N/A',
         totalMatched: matchingBook?.totalMatched || 0,
-        selections: market.runners.map(runner => {
-          const runnerBook = matchingBook?.runners.find(b => b.selectionId === runner.selectionId);
+        selections: (market.runners || []).map(runner => {
+          const runnerBook = matchingBook?.runners?.find(r => r.selectionId === runner.selectionId);
           return {
             name: runner.runnerName,
-            back:
-              runnerBook?.ex?.availableToBack?.slice(0, 3).map(b => ({ price: b.price, size: b.size })) || [],
-            lay:
-              runnerBook?.ex?.availableToLay?.slice(0, 3).map(l => ({ price: l.price, size: l.size })) || []
+            back: runnerBook?.ex?.availableToBack?.slice(0, 3).map(b => ({ price: b.price, size: b.size })) || [],
+            lay: runnerBook?.ex?.availableToLay?.slice(0, 3).map(l => ({ price: l.price, size: l.size })) || []
           };
         })
       };
     });
 
-    // 📅 Sort by start time
+    // 📅 Sort by start time (ascending)
     finalData.sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
 
-    // 🧹 Remove duplicate races (same event name + same startTime)
-    finalData = finalData.filter(
-      (item, index, self) =>
-        index === self.findIndex(
-          t => t.match === item.match && new Date(t.startTime).getTime() === new Date(item.startTime).getTime()
-        )
-    );
-
-    // ✅ Final response
-    res.status(200).json({
-      status: 'success',
-      count: finalData.length,
-      data: finalData
-    });
+    // ✅ Success
+    res.status(200).json({ status: 'success', count: finalData.length, data: finalData });
 
   } catch (err) {
-    console.error('❌ Greyhound Racing API Error:', err.response?.data || err.message);
+    console.error('❌ Greyhound Racing API Error:', err?.response?.data || err.message);
     res.status(500).json({
       status: 'error',
       message: 'Failed to fetch greyhound racing odds',
