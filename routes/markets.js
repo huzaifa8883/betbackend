@@ -1078,15 +1078,17 @@ router.get('/live/horse', async (req, res) => {
   try {
     const sessionToken = await getSessionToken();
 
-    // Current time + next 50 hours in proper UTC
+    // Proper UTC time: now to next 50 hours
     const now = new Date();
-    const nowUTC = new Date(now.getTime() + now.getTimezoneOffset() * 60000);
+    const nowUTC = new Date(now.toUTCString().replace(/ GMT$/, ''));
     const toUTC = new Date(nowUTC.getTime() + 50 * 60 * 60 * 1000);
 
-    const fromISO = nowUTC.toISOString().replace(/\.\d+Z$/, 'Z');
-    const toISO = toUTC.toISOString().replace(/\.\d+Z$/, 'Z');
+    const fromISO = nowUTC.toISOString().split('.')[0] + 'Z';  // Clean ISO without millis
+    const toISO = toUTC.toISOString().split('.')[0] + 'Z';
 
-    // Step 1: Get Horse Racing Events (Guaranteed working filter 2025)
+    console.log(`Fetching horse events from ${fromISO} to ${toISO}`);  // Debug log
+
+    // Step 1: Get Horse Racing Events - MINIMAL FILTER ONLY (no marketTypeCodes etc.)
     const eventsRes = await axios.post(
       'https://api.betfair.com/exchange/betting/json-rpc/v1',
       [{
@@ -1094,15 +1096,12 @@ router.get('/live/horse', async (req, res) => {
         method: 'SportsAPING/v1.0/listEvents',
         params: {
           filter: {
-            eventTypeIds: ['7'],                    // Horse Racing only
-            marketStartTime: {
+            eventTypeIds: ['7'],  // Horse Racing only
+            marketStartTime: {    // Yeh zaroori hai dates ke liye
               from: fromISO,
               to: toISO
-            },
-            marketTypeCodes: ['WIN', 'PLACE'],       // Yeh line zaroori hai ab
-            marketCountries: ['GB', 'IE', 'AU', 'US', 'ZA', 'FR', 'AE', 'IN', 'NZ'], // Major countries
-            marketBettingTypes: ['ODDS'],
-            textQuery: 'horse'                       // Extra safety
+            }
+            // NO marketTypeCodes, marketCountries, textQuery here - ye listEvents ko empty kar dete hain!
           }
         },
         id: 1
@@ -1116,24 +1115,31 @@ router.get('/live/horse', async (req, res) => {
       }
     );
 
+    console.log('Events Response:', JSON.stringify(eventsRes.data, null, 2));  // Debug: Check raw response
+
     const events = eventsRes.data?.[0]?.result || [];
     if (!events.length) {
-      console.log("No horse racing events found in next 50 hours");
-      return res.json({ status: "success", data: [] });
+      console.log("No horse racing events found - check IP/country or time window");
+      return res.json({ status: "success", data: [], debug: { from: fromISO, to: toISO } });
     }
 
+    console.log(`Found ${events.length} events`);
     const eventIds = events.map(e => e.event.id);
 
-    // Step 2: Market Catalogue (WIN + PLACE markets)
+    // Step 2: Market Catalogue - YAHAN market filters daal (WIN + PLACE, countries)
     const marketCatRes = await axios.post(
       'https://api.betfair.com/exchange/betting/json-rpc/v1',
       [{
         jsonrpc: '2.0',
         method: 'SportsAPING/v1.0/listMarketCatalogue',
         params: {
-          filter: { eventIds, marketTypeCodes: ['WIN', 'PLACE'] },
+          filter: {
+            eventIds,
+            marketTypeCodes: ['WIN', 'PLACE'],
+            marketCountries: ['GB', 'IE', 'AU', 'US', 'ZA', 'FR', 'AE', 'IN', 'NZ']  // Major horse countries
+          },
           maxResults: '2000',
-          marketProjection: ['EVENT', 'RUNNER_DESCRIPTION', 'MARKET_START_TIME']
+          marketProjection: ['EVENT', 'RUNNER_DESCRIPTION', 'MARKET_START_TIME', 'RUNNER_METADATA']
         },
         id: 2
       }],
@@ -1148,15 +1154,15 @@ router.get('/live/horse', async (req, res) => {
 
     let catalogues = marketCatRes.data?.[0]?.result || [];
     if (!catalogues.length) {
+      console.log("No markets found for events");
       return res.json({ status: "success", data: [] });
     }
 
-    // Optional: Sirf upcoming races dikhao (jo abhi start nahi hue)
+    // Filter upcoming only
     catalogues = catalogues.filter(m => new Date(m.marketStartTime) > new Date());
-
     const marketIds = catalogues.map(m => m.marketId);
 
-    // Step 3: Market Books (Live Odds)
+    // Step 3: Market Books (Odds)
     const marketBookRes = await axios.post(
       'https://api.betfair.com/exchange/betting/json-rpc/v1',
       [{
@@ -1166,7 +1172,7 @@ router.get('/live/horse', async (req, res) => {
           marketIds,
           priceProjection: {
             priceData: ['EX_BEST_OFFERS'],
-            virtualise: true
+            virtualise: false  // Set to false for real markets
           }
         },
         id: 3
@@ -1182,39 +1188,38 @@ router.get('/live/horse', async (req, res) => {
 
     const books = marketBookRes.data?.[0]?.result || [];
 
-    // Merge everything
+    // Merge data
     const final = catalogues.map(cat => {
       const book = books.find(b => b.marketId === cat.marketId);
       const event = events.find(e => e.event.id === cat.event.id);
-
       return {
         marketId: cat.marketId,
-        marketName: cat.marketName,           // Win ya Place
-        match: event?.event?.name || "Unknown Race",
+        marketName: cat.marketName,
+        match: `${event?.event?.name || "Unknown"} - ${cat.marketName}`,
         venue: event?.event?.venue || "",
         country: event?.event?.countryCode || "",
         startTime: cat.marketStartTime,
         status: book?.status || "CLOSED",
         totalMatched: book?.totalMatched || 0,
-        runners: cat.runners.map(r => {
+        runners: cat.runners?.map(r => {
           const runnerBook = book?.runners?.find(x => x.selectionId === r.selectionId);
           return {
             selectionId: r.selectionId,
             name: r.runnerName,
-            back: runnerBook?.ex?.availableToBack?.slice(0, 3) || [],
-            lay: runnerBook?.ex?.availableToLay?.slice(0, 3) || []
+            back: runnerBook?.ex?.availableToBack?.slice(0, 3).map(p => ({ price: p.price, size: p.size })) || [],
+            lay: runnerBook?.ex?.availableToLay?.slice(0, 3).map(p => ({ price: p.price, size: p.size })) || []
           };
-        })
+        }) || []
       };
     });
 
-    // Sort by start time
     final.sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
 
     res.json({
       status: "success",
       count: final.length,
-      data: final
+      data: final,
+      debug: { eventsCount: events.length, from: fromISO, to: toISO }
     });
 
   } catch (err) {
