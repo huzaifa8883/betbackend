@@ -1078,17 +1078,44 @@ router.get('/live/horse', async (req, res) => {
   try {
     const sessionToken = await getSessionToken();
 
-    // Proper UTC time: now to next 50 hours
+    // Proper UTC: now to next 7 days (168 hours) for more events like Betfair Chase
     const now = new Date();
-    const nowUTC = new Date(now.toUTCString().replace(/ GMT$/, ''));
-    const toUTC = new Date(nowUTC.getTime() + 50 * 60 * 60 * 1000);
+    const nowUTC = new Date(now.getTime() + (now.getTimezoneOffset() * 60000)); // Fix to UTC
+    const toUTC = new Date(nowUTC.getTime() + (168 * 60 * 60 * 1000)); // 7 days
 
-    const fromISO = nowUTC.toISOString().split('.')[0] + 'Z';  // Clean ISO without millis
+    const fromISO = nowUTC.toISOString().split('.')[0] + 'Z';
     const toISO = toUTC.toISOString().split('.')[0] + 'Z';
 
-    console.log(`Fetching horse events from ${fromISO} to ${toISO}`);  // Debug log
+    console.log(`🔍 Fetching horse events from ${fromISO} to ${toISO} (7 days window)`);
 
-    // Step 1: Get Horse Racing Events - MINIMAL FILTER ONLY (no marketTypeCodes etc.)
+    // Debug: First check if Horse Racing eventType is available
+    const eventTypesRes = await axios.post(
+      'https://api.betfair.com/exchange/betting/json-rpc/v1',
+      [{
+        jsonrpc: '2.0',
+        method: 'SportsAPING/v1.0/listEventTypes',
+        params: { filter: {} },
+        id: 0
+      }],
+      {
+        headers: {
+          'X-Application': APP_KEY,
+          'X-Authentication': sessionToken,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    const eventTypes = eventTypesRes.data?.[0]?.result || [];
+    const horseType = eventTypes.find(et => et.eventType.name === 'Horse Racing');
+    const horseId = horseType?.eventType.id || '7';
+    console.log(`🐎 Horse Racing ID: ${horseId} (Available: ${!!horseType})`);
+
+    if (!horseType) {
+      return res.json({ status: "error", message: "Horse Racing not available in your region/IP. Try VPN (UK/AU)." });
+    }
+
+    // Step 1: Get Horse Racing Events - Minimal + wider time
     const eventsRes = await axios.post(
       'https://api.betfair.com/exchange/betting/json-rpc/v1',
       [{
@@ -1096,12 +1123,11 @@ router.get('/live/horse', async (req, res) => {
         method: 'SportsAPING/v1.0/listEvents',
         params: {
           filter: {
-            eventTypeIds: ['7'],  // Horse Racing only
-            marketStartTime: {    // Yeh zaroori hai dates ke liye
+            eventTypeIds: [horseId],
+            marketStartTime: {
               from: fromISO,
               to: toISO
             }
-            // NO marketTypeCodes, marketCountries, textQuery here - ye listEvents ko empty kar dete hain!
           }
         },
         id: 1
@@ -1115,18 +1141,28 @@ router.get('/live/horse', async (req, res) => {
       }
     );
 
-    console.log('Events Response:', JSON.stringify(eventsRes.data, null, 2));  // Debug: Check raw response
+    console.log('📊 Raw Events Response:', JSON.stringify(eventsRes.data, null, 2)); // Full debug
 
     const events = eventsRes.data?.[0]?.result || [];
     if (!events.length) {
-      console.log("No horse racing events found - check IP/country or time window");
-      return res.json({ status: "success", data: [], debug: { from: fromISO, to: toISO } });
+      console.log("⚠️ No events - Possible: No races scheduled, IP restricted, or token issue");
+      return res.json({
+        status: "success",
+        data: [],
+        debug: {
+          from: fromISO,
+          to: toISO,
+          eventsCount: 0,
+          sampleEvent: null,
+          tip: "Try VPN to UK/Australia. Upcoming: Betfair Chase on 22 Nov 2025."
+        }
+      });
     }
 
-    console.log(`Found ${events.length} events`);
+    console.log(`✅ Found ${events.length} events. Sample: ${events[0]?.event?.name}`);
     const eventIds = events.map(e => e.event.id);
 
-    // Step 2: Market Catalogue - YAHAN market filters daal (WIN + PLACE, countries)
+    // Step 2: Market Catalogue - Relaxed filter (no countries to avoid blocks)
     const marketCatRes = await axios.post(
       'https://api.betfair.com/exchange/betting/json-rpc/v1',
       [{
@@ -1135,8 +1171,7 @@ router.get('/live/horse', async (req, res) => {
         params: {
           filter: {
             eventIds,
-            marketTypeCodes: ['WIN', 'PLACE'],
-            marketCountries: ['GB', 'IE', 'AU', 'US', 'ZA', 'FR', 'AE', 'IN', 'NZ']  // Major horse countries
+            marketTypeCodes: ['WIN', 'PLACE']
           },
           maxResults: '2000',
           marketProjection: ['EVENT', 'RUNNER_DESCRIPTION', 'MARKET_START_TIME', 'RUNNER_METADATA']
@@ -1154,7 +1189,7 @@ router.get('/live/horse', async (req, res) => {
 
     let catalogues = marketCatRes.data?.[0]?.result || [];
     if (!catalogues.length) {
-      console.log("No markets found for events");
+      console.log("⚠️ No markets - Relaxing further?");
       return res.json({ status: "success", data: [] });
     }
 
@@ -1162,7 +1197,7 @@ router.get('/live/horse', async (req, res) => {
     catalogues = catalogues.filter(m => new Date(m.marketStartTime) > new Date());
     const marketIds = catalogues.map(m => m.marketId);
 
-    // Step 3: Market Books (Odds)
+    // Step 3: Market Books
     const marketBookRes = await axios.post(
       'https://api.betfair.com/exchange/betting/json-rpc/v1',
       [{
@@ -1172,7 +1207,7 @@ router.get('/live/horse', async (req, res) => {
           marketIds,
           priceProjection: {
             priceData: ['EX_BEST_OFFERS'],
-            virtualise: false  // Set to false for real markets
+            virtualise: false
           }
         },
         id: 3
@@ -1188,7 +1223,7 @@ router.get('/live/horse', async (req, res) => {
 
     const books = marketBookRes.data?.[0]?.result || [];
 
-    // Merge data
+    // Merge
     const final = catalogues.map(cat => {
       const book = books.find(b => b.marketId === cat.marketId);
       const event = events.find(e => e.event.id === cat.event.id);
@@ -1211,7 +1246,7 @@ router.get('/live/horse', async (req, res) => {
           };
         }) || []
       };
-    });
+    }).filter(item => item.runners.length > 0); // Only races with runners
 
     final.sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
 
@@ -1219,14 +1254,20 @@ router.get('/live/horse', async (req, res) => {
       status: "success",
       count: final.length,
       data: final,
-      debug: { eventsCount: events.length, from: fromISO, to: toISO }
+      debug: {
+        eventsCount: events.length,
+        sampleEvent: events[0]?.event?.name || null,
+        from: fromISO,
+        to: toISO,
+        horseTypeAvailable: !!horseType
+      }
     });
 
   } catch (err) {
-    console.error("Horse Racing API Error:", err.response?.data || err.message);
+    console.error("❌ Horse API Error:", err.response?.data || err.message);
     res.status(500).json({
       status: "error",
-      message: "Failed to fetch horse racing data",
+      message: "API fetch failed - Check token/IP",
       details: err.response?.data || err.message
     });
   }
