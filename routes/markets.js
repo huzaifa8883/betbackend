@@ -1215,7 +1215,6 @@ router.get('/live/horse', async (req, res) => {
     });
   }
 });
-
 const sportMap = {
   1: { name: "Soccer", image: "soccer.svg" },
   2: { name: "Tennis", image: "tennis.svg" },
