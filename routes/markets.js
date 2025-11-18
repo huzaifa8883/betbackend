@@ -464,7 +464,307 @@ const finalData = marketCatalogues.map(market => {
     });
   }
 });
-router.get('/live/cricket/inplay', async (req, res) => {
+router.get("/inplay/soccer", async (req, res) => {
+  try {
+    const sportId = 1;
+    const maxResults = 30;
+
+    const marketFilter = {
+      inPlayOnly: true, // ✅ Sirf in-play markets
+      eventTypeIds: [String(sportId)],
+      marketTypeCodes: ["MATCH_ODDS"],
+    };
+
+    const marketCatalogueParams = {
+      filter: marketFilter,
+      maxResults,
+      marketProjection: ["EVENT", "RUNNER_DESCRIPTION", "MARKET_START_TIME"],
+    };
+
+    const marketCatalogues = await betfairRpc(
+      "SportsAPING/v1.0/listMarketCatalogue",
+      marketCatalogueParams
+    );
+
+    const marketIds = marketCatalogues.map((m) => m.marketId);
+    if (marketIds.length === 0)
+      return res.json({ success: true, count: 0, markets: [] });
+
+    const marketBookParams = {
+      marketIds,
+      priceProjection: { priceData: ["EX_BEST_OFFERS"] },
+    };
+
+    const marketBooks = await betfairRpc(
+      "SportsAPING/v1.0/listMarketBook",
+      marketBookParams
+    );
+
+    // ✅ Combine and only keep live matches
+    const combined = marketCatalogues
+      .map((market) => {
+        const book = marketBooks.find((b) => b.marketId === market.marketId);
+        if (!book || !book.inplay) return null; // ❌ Skip if not live
+
+        const selections = (market.runners || []).map((runner) => {
+          const runnerBook = book.runners.find(
+            (r) => r.selectionId === runner.selectionId
+          );
+          return {
+            name: runner.runnerName,
+            back: runnerBook?.ex?.availableToBack?.[0] || {
+              price: "-",
+              size: "-",
+            },
+            lay: runnerBook?.ex?.availableToLay?.[0] || {
+              price: "-",
+              size: "-",
+            },
+          };
+        });
+
+        // 🕒 FIX: Convert start time properly
+        const formattedStartTime = market.marketStartTime
+          ? new Date(market.marketStartTime).toLocaleTimeString("en-GB", {
+              hour: "2-digit",
+              minute: "2-digit",
+            })
+          : new Date().toLocaleTimeString("en-GB", {
+              hour: "2-digit",
+              minute: "2-digit",
+            });
+
+        return {
+          marketId: market.marketId,
+          match: market.event.name,
+          startTime: formattedStartTime,
+          status: book.inplay ? "IN-PLAY" : book.status || "UNKNOWN", // ✅ Custom status
+          totalMatched: book.totalMatched || 0,
+          odds: {
+            back1: selections[0]?.back || { price: "-", size: "-" },
+            lay1: selections[0]?.lay || { price: "-", size: "-" },
+            backX: selections[1]?.back || { price: "-", size: "-" },
+            layX: selections[1]?.lay || { price: "-", size: "-" },
+            back2: selections[2]?.back || { price: "-", size: "-" },
+            lay2: selections[2]?.lay || { price: "-", size: "-" },
+          },
+        };
+      })
+      .filter(Boolean)
+      .slice(0, 5); // ✅ Limit to 5 live matches only
+
+    res.json({
+      success: true,
+      sport: "Soccer",
+      count: combined.length,
+      markets: combined,
+    });
+  } catch (err) {
+    console.error("❌ Error fetching soccer in-play:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.get("/inplay/cricket", async (req, res) => {
+  try {
+    const sportId = 4;
+    const maxResults = 30;
+
+    const marketFilter = {
+      inPlayOnly: true, // ✅ Sirf in-play markets
+      eventTypeIds: [String(sportId)],
+      marketTypeCodes: ["MATCH_ODDS"],
+    };
+
+    const marketCatalogueParams = {
+      filter: marketFilter,
+      maxResults,
+      marketProjection: ["EVENT", "RUNNER_DESCRIPTION", "MARKET_START_TIME"],
+    };
+
+    const marketCatalogues = await betfairRpc(
+      "SportsAPING/v1.0/listMarketCatalogue",
+      marketCatalogueParams
+    );
+
+    const marketIds = marketCatalogues.map((m) => m.marketId);
+    if (marketIds.length === 0)
+      return res.json({ success: true, count: 0, markets: [] });
+
+    const marketBookParams = {
+      marketIds,
+      priceProjection: { priceData: ["EX_BEST_OFFERS"] },
+    };
+
+    const marketBooks = await betfairRpc(
+      "SportsAPING/v1.0/listMarketBook",
+      marketBookParams
+    );
+
+    // ✅ Combine and only keep live matches
+    const combined = marketCatalogues
+      .map((market) => {
+        const book = marketBooks.find((b) => b.marketId === market.marketId);
+        if (!book || !book.inplay) return null; // ❌ Skip if not live
+
+        const selections = (market.runners || []).map((runner) => {
+          const runnerBook = book.runners.find(
+            (r) => r.selectionId === runner.selectionId
+          );
+          return {
+            name: runner.runnerName,
+            back: runnerBook?.ex?.availableToBack?.[0] || {
+              price: "-",
+              size: "-",
+            },
+            lay: runnerBook?.ex?.availableToLay?.[0] || {
+              price: "-",
+              size: "-",
+            },
+          };
+        });
+
+        // 🕒 FIX: proper startTime format
+        const formattedStartTime = market.marketStartTime
+          ? new Date(market.marketStartTime).toLocaleTimeString("en-GB", {
+              hour: "2-digit",
+              minute: "2-digit",
+            })
+          : new Date().toLocaleTimeString("en-GB", {
+              hour: "2-digit",
+              minute: "2-digit",
+            });
+
+        return {
+          marketId: market.marketId,
+          match: market.event.name,
+          startTime: formattedStartTime,
+          status: book.inplay ? "IN-PLAY" : book.status || "UNKNOWN",
+          totalMatched: book.totalMatched || 0,
+          odds: {
+            back1: selections[0]?.back || { price: "-", size: "-" },
+            lay1: selections[0]?.lay || { price: "-", size: "-" },
+            backX: selections[1]?.back || { price: "-", size: "-" },
+            layX: selections[1]?.lay || { price: "-", size: "-" },
+            back2: selections[2]?.back || { price: "-", size: "-" },
+            lay2: selections[2]?.lay || { price: "-", size: "-" },
+          },
+        };
+      })
+      .filter(Boolean)
+      .slice(0, 5); // ✅ Limit to 5 live matches only
+
+    res.json({
+      success: true,
+      sport: "cricket",
+      count: combined.length,
+      markets: combined,
+    });
+  } catch (err) {
+    console.error("❌ Error fetching cricket in-play:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+
+router.get("/inplay/tennis", async (req, res) => {
+  try {
+    const sportId = 2;
+    const maxResults = 30;
+
+    const marketFilter = {
+      inPlayOnly: true,
+      eventTypeIds: [String(sportId)],
+      marketTypeCodes: ["MATCH_ODDS"],
+    };
+
+    const marketCatalogueParams = {
+      filter: marketFilter,
+      maxResults,
+      marketProjection: ["EVENT", "RUNNER_DESCRIPTION", "MARKET_START_TIME"],
+    };
+
+    const marketCatalogues = await betfairRpc(
+      "SportsAPING/v1.0/listMarketCatalogue",
+      marketCatalogueParams
+    );
+
+    const marketIds = marketCatalogues.map((m) => m.marketId);
+    if (marketIds.length === 0)
+      return res.json({ success: true, count: 0, markets: [] });
+
+    const marketBookParams = {
+      marketIds,
+      priceProjection: { priceData: ["EX_BEST_OFFERS"] },
+    };
+
+    const marketBooks = await betfairRpc(
+      "SportsAPING/v1.0/listMarketBook",
+      marketBookParams
+    );
+
+    const combined = marketCatalogues
+      .map((market) => {
+        const book = marketBooks.find((b) => b.marketId === market.marketId);
+        if (!book || !book.inplay) return null;
+
+        const selections = (market.runners || []).map((runner) => {
+          const runnerBook = book.runners.find(
+            (r) => r.selectionId === runner.selectionId
+          );
+          return {
+            name: runner.runnerName,
+            back: runnerBook?.ex?.availableToBack?.[0] || {
+              price: "-",
+              size: "-",
+            },
+            lay: runnerBook?.ex?.availableToLay?.[0] || {
+              price: "-",
+              size: "-",
+            },
+          };
+        });
+
+        return {
+          marketId: market.marketId,
+          match: market.event.name,
+          startTime: market.marketStartTime
+            ? new Date(market.marketStartTime).toLocaleTimeString("en-GB", {
+                hour: "2-digit",
+                minute: "2-digit",
+              })
+            : new Date().toLocaleTimeString("en-GB", {
+                hour: "2-digit",
+                minute: "2-digit",
+              }),
+          status: book.inplay ? "IN-PLAY" : book.status || "UNKNOWN",
+          totalMatched: book.totalMatched || 0,
+          odds: {
+            back1: selections[0]?.back || { price: "-", size: "-" },
+            lay1: selections[0]?.lay || { price: "-", size: "-" },
+            backX: selections[1]?.back || { price: "-", size: "-" },
+            layX: selections[1]?.lay || { price: "-", size: "-" },
+            back2: selections[2]?.back || { price: "-", size: "-" },
+            lay2: selections[2]?.lay || { price: "-", size: "-" },
+          },
+        };
+      })
+      .filter(Boolean)
+      .slice(0, 5);
+
+    res.json({
+      success: true,
+      sport: "tennis",
+      count: combined.length,
+      markets: combined,
+    });
+  } catch (err) {
+    console.error("❌ Error fetching tennis in-play:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.get('/inplay', async (req, res) => {
   try {
     const sessionToken = await getSessionToken();
 
