@@ -464,6 +464,31 @@ const finalData = marketCatalogues.map(market => {
     });
   }
 });
+async function betfairRpc(method, params) {
+  const sessionToken = await getSessionToken();
+  const res = await axios.post(
+    "https://api.betfair.com/exchange/betting/json-rpc/v1",
+    [
+      {
+        jsonrpc: "2.0",
+        method,
+        id: 1,
+        params,
+      },
+    ],
+    {
+      headers: {
+        "X-Application": APP_KEY,
+        "X-Authentication": sessionToken,
+        "Content-Type": "application/json",
+      },
+    }
+  );
+
+  if (res.data && res.data[0]) return res.data[0].result;
+  throw new Error("Invalid RPC response");
+}
+
 router.get("/inplay/soccer", async (req, res) => {
   try {
     const sportId = 1;
