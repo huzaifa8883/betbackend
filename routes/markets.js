@@ -1078,12 +1078,12 @@ router.get('/live/horse', async (req, res) => {
   try {
     const sessionToken = await getSessionToken();
 
-    // 🕒 Time window: now → next 50 hours (UTC)
+    // 🕒 Current UTC time
     const now = new Date();
     const nowUTC = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
-    const toUTC = new Date(nowUTC.getTime() + 50 * 60 * 60 * 1000);
+    const toUTC = new Date(nowUTC.getTime() + 60 * 60 * 60 * 1000); // 60 hours window
 
-    // 🐎 1) Get Horse Racing Events (next 50 hours, all countries)
+    // 🐎 1) Get Horse Racing Events
     const eventsRes = await axios.post(
       'https://api.betfair.com/exchange/betting/json-rpc/v1',
       [
@@ -1093,8 +1093,9 @@ router.get('/live/horse', async (req, res) => {
           params: {
             filter: {
               eventTypeIds: ['7'], // Horse Racing
+              // Time filter relaxed: show events from 1h ago to +60h
               marketStartTime: {
-                from: nowUTC.toISOString(),
+                from: new Date(nowUTC.getTime() - 60*60*1000).toISOString(),
                 to: toUTC.toISOString()
               }
             }
@@ -1112,6 +1113,8 @@ router.get('/live/horse', async (req, res) => {
     );
 
     const events = eventsRes.data?.[0]?.result || [];
+    console.log("Horse Events Fetched:", events.length);
+
     if (!events.length) {
       console.log("⚠ No horse racing events found");
       return res.json({ status: "success", data: [] });
@@ -1127,11 +1130,8 @@ router.get('/live/horse', async (req, res) => {
           jsonrpc: '2.0',
           method: 'SportsAPING/v1.0/listMarketCatalogue',
           params: {
-            filter: {
-              eventIds,
-              marketTypeCodes: ['WIN', 'PLACE']
-            },
-            maxResults: '2000',
+            filter: { eventIds },
+            maxResults: 2000,
             marketProjection: ['EVENT','RUNNER_METADATA']
           },
           id: 2
@@ -1147,6 +1147,8 @@ router.get('/live/horse', async (req, res) => {
     );
 
     const catalogues = marketCatRes.data?.[0]?.result || [];
+    console.log("Market Catalogues Fetched:", catalogues.length);
+
     if (!catalogues.length) {
       console.log("⚠ No markets found for events");
       return res.json({ status: "success", data: [] });
