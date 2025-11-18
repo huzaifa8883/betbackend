@@ -1078,17 +1078,18 @@ router.get('/live/horse', async (req, res) => {
   try {
     const sessionToken = await getSessionToken();
 
-    // Proper UTC time: now to next 24 hours (focus on today's evening races)
+    // Fixed timezone: Proper UTC now, from 2 hours ago to next 12 hours (catch evening races)
     const now = new Date();
-    const nowUTC = new Date(now.toUTCString().replace(' GMT', ''));  // Clean UTC
-    const toUTC = new Date(nowUTC.getTime() + (24 * 60 * 60 * 1000));  // 24 hours for evening cards
+    const nowUTC = new Date(now.getTime() - (now.getTimezoneOffset() * 60000)); // Correct local to UTC
+    const fromUTC = new Date(nowUTC.getTime() - (2 * 60 * 60 * 1000)); // 2 hours back for current races
+    const toUTC = new Date(nowUTC.getTime() + (12 * 60 * 60 * 1000)); // 12 hours ahead
 
-    const fromISO = nowUTC.toISOString().split('.')[0] + 'Z';
+    const fromISO = fromUTC.toISOString().split('.')[0] + 'Z';
     const toISO = toUTC.toISOString().split('.')[0] + 'Z';
 
-    console.log(`🔍 Fetching horse markets from ${fromISO} to ${toISO} (24h window for evening races)`);
+    console.log(`🔍 Fetching horse markets from ${fromISO} to ${toISO} (2h back + 12h ahead for evening cards)`);
 
-    // Step 0: Verify Horse Racing available
+    // Step 0: Verify Horse Racing
     const eventTypesRes = await axios.post(
       'https://api.betfair.com/exchange/betting/json-rpc/v1',
       [{ jsonrpc: '2.0', method: 'SportsAPING/v1.0/listEventTypes', params: { filter: {} }, id: 0 }],
@@ -1100,13 +1101,12 @@ router.get('/live/horse', async (req, res) => {
     const horseId = horseType?.eventType.id || '7';
 
     if (!horseType) {
-      return res.json({ status: "error", message: "Horse Racing not available - Try VPN (UK/AU IP)." });
+      return res.json({ status: "error", message: "Horse Racing blocked - Use UK/AU VPN (strict IP check)." });
     }
 
     console.log(`🐎 Horse ID: ${horseId} (Available: true)`);
 
-    // Step 1: Direct listMarketCatalogue for Horse WIN/PLACE (no events needed - fetch all markets)
-    // Use textQuery for today's venues to guarantee Greyville/Kelso etc.
+    // Step 1: Direct listMarketCatalogue for today's venues (WIN/PLACE, countries added)
     const marketCatRes = await axios.post(
       'https://api.betfair.com/exchange/betting/json-rpc/v1',
       [{
@@ -1117,7 +1117,8 @@ router.get('/live/horse', async (req, res) => {
             eventTypeIds: [horseId],
             marketTypeCodes: ['WIN', 'PLACE'],
             marketStartTime: { from: fromISO, to: toISO },
-            textQuery: 'greyville|kelso|limerick|lingfield|newcastle|scottsville'  // Target today's venues
+            marketCountries: ['GB', 'IE', 'ZA'], // GB/IE for Kelso/Limerick/Lingfield/Newcastle, ZA for Greyville
+            textQuery: 'greyville|kelso|limerick|lingfield|newcastle'  // Exact from your list
           },
           maxResults: '2000',
           marketProjection: ['EVENT', 'RUNNER_DESCRIPTION', 'MARKET_START_TIME', 'RUNNER_METADATA', 'MARKET_DESCRIPTION']
@@ -1127,25 +1128,29 @@ router.get('/live/horse', async (req, res) => {
       { headers: { 'X-Application': APP_KEY, 'X-Authentication': sessionToken, 'Content-Type': 'application/json' } }
     );
 
-    console.log('📊 Raw Markets Response:', JSON.stringify(marketCatRes.data, null, 2));
+    console.log('📊 Raw Markets Response:', JSON.stringify(marketCatRes.data, null, 2)); // Debug raw
 
     let catalogues = marketCatRes.data?.[0]?.result || [];
     if (!catalogues.length) {
-      console.log("⚠️ No markets - Check IP/VPN or widen time");
+      console.log("⚠️ Empty markets - IP restricted? Raw response above.");
       return res.json({
         status: "success",
         data: [],
-        debug: { from: fromISO, to: toISO, tip: "Use UK VPN. Today's races: Greyville 10:10, Kelso 15:25 etc." }
+        debug: { 
+          from: fromISO, 
+          to: toISO, 
+          tip: "IP blocked for horse data. Use UK VPN (e.g., London server). Races exist: Greyville 10:10 UTC past, Kelso 15:25 UTC upcoming."
+        }
       });
     }
 
-    // Filter upcoming only (exclude past)
-    catalogues = catalogues.filter(m => new Date(m.marketStartTime) > nowUTC);
-    console.log(`✅ Found ${catalogues.length} markets (WIN/PLACE)`);
+    // Filter non-past races (upcoming + current)
+    catalogues = catalogues.filter(m => new Date(m.marketStartTime) >= nowUTC);
+    console.log(`✅ Found ${catalogues.length} upcoming markets`);
 
     const marketIds = catalogues.map(m => m.marketId);
 
-    // Step 2: Get Odds (Market Books)
+    // Step 2: Market Books for odds
     const marketBookRes = await axios.post(
       'https://api.betfair.com/exchange/betting/json-rpc/v1',
       [{
@@ -1162,17 +1167,17 @@ router.get('/live/horse', async (req, res) => {
 
     const books = marketBookRes.data?.[0]?.result || [];
 
-    // Step 3: Merge into final (group by venue/event for clean output)
+    // Step 3: Merge
     const final = catalogues.map(cat => {
       const book = books.find(b => b.marketId === cat.marketId);
       return {
         marketId: cat.marketId,
         marketName: cat.marketName,  // WIN or PLACE
         match: `${cat.event.name} - ${cat.marketName}`,  // e.g., "Kelso 7:25 PM - WIN"
-        venue: cat.event.venue || cat.event.name.split(' ')[0],
+        venue: cat.event.venue || cat.event.name.split(' - ')[0],
         country: cat.event.countryCode || "",
         startTime: cat.marketStartTime,
-        status: book?.status || "CLOSED",
+        status: book?.status || "OPEN",  // Usually OPEN for live
         totalMatched: book?.totalMatched || 0,
         runners: cat.runners.map(r => {
           const runnerBook = book?.runners?.find(x => x.selectionId === r.selectionId);
@@ -1184,7 +1189,7 @@ router.get('/live/horse', async (req, res) => {
           };
         })
       };
-    }).filter(item => item.runners.length > 0);  // Only with runners/odds
+    }).filter(item => item.runners.length > 0);
 
     final.sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
 
@@ -1197,7 +1202,7 @@ router.get('/live/horse', async (req, res) => {
         sampleMatch: final[0]?.match || null,
         from: fromISO,
         to: toISO,
-        note: "Direct markets fetch - Covers Greyville, Kelso, Limerick etc. today."
+        note: "Fixed for evening races. If empty, IP issue - try different UK VPN server."
       }
     });
 
@@ -1205,12 +1210,11 @@ router.get('/live/horse', async (req, res) => {
     console.error("❌ Horse API Error:", err.response?.data || err.message);
     res.status(500).json({
       status: "error",
-      message: "API failed - Check token/IP",
+      message: "API failed - Check token/VPN",
       details: err.response?.data || err.message
     });
   }
 });
-
 
 const sportMap = {
   1: { name: "Soccer", image: "soccer.svg" },
