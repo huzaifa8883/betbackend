@@ -1081,9 +1081,8 @@ router.get('/live/horse', async (req, res) => {
     // 🕒 Current UTC time
     const now = new Date();
     const nowUTC = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
-    const toUTC = new Date(nowUTC.getTime() + 60 * 60 * 60 * 1000); // 60 hours window
 
-    // 🐎 1) Get Horse Racing Events
+    // 🐎 1) Get Horse Racing Events (only eventTypeId filter, no time)
     const eventsRes = await axios.post(
       'https://api.betfair.com/exchange/betting/json-rpc/v1',
       [
@@ -1092,12 +1091,7 @@ router.get('/live/horse', async (req, res) => {
           method: 'SportsAPING/v1.0/listEvents',
           params: {
             filter: {
-              eventTypeIds: ['7'], // Horse Racing
-              // Time filter relaxed: show events from 1h ago to +60h
-              marketStartTime: {
-                from: new Date(nowUTC.getTime() - 60*60*1000).toISOString(),
-                to: toUTC.toISOString()
-              }
+              eventTypeIds: ['7'] // Horse Racing
             }
           },
           id: 1
@@ -1114,7 +1108,6 @@ router.get('/live/horse', async (req, res) => {
 
     const events = eventsRes.data?.[0]?.result || [];
     console.log("Horse Events Fetched:", events.length);
-
     if (!events.length) {
       console.log("⚠ No horse racing events found");
       return res.json({ status: "success", data: [] });
@@ -1122,7 +1115,7 @@ router.get('/live/horse', async (req, res) => {
 
     const eventIds = events.map(e => e.event.id);
 
-    // 🐎 2) Market Catalogue (WIN + PLACE)
+    // 🐎 2) Market Catalogue (WIN + PLACE + proper projection)
     const marketCatRes = await axios.post(
       'https://api.betfair.com/exchange/betting/json-rpc/v1',
       [
@@ -1132,7 +1125,12 @@ router.get('/live/horse', async (req, res) => {
           params: {
             filter: { eventIds },
             maxResults: 2000,
-            marketProjection: ['EVENT','RUNNER_METADATA']
+            marketProjection: [
+              'EVENT',
+              'RUNNER_METADATA',
+              'MARKET_START_TIME',
+              'RUNNER_DESCRIPTION'
+            ]
           },
           id: 2
         }
@@ -1148,7 +1146,6 @@ router.get('/live/horse', async (req, res) => {
 
     const catalogues = marketCatRes.data?.[0]?.result || [];
     console.log("Market Catalogues Fetched:", catalogues.length);
-
     if (!catalogues.length) {
       console.log("⚠ No markets found for events");
       return res.json({ status: "success", data: [] });
@@ -1203,6 +1200,7 @@ router.get('/live/horse', async (req, res) => {
       };
     });
 
+    // Sort by start time
     final.sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
 
     res.json({ status: "success", data: final });
@@ -1216,6 +1214,7 @@ router.get('/live/horse', async (req, res) => {
     });
   }
 });
+
 
 
 
