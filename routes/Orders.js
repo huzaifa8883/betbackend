@@ -354,40 +354,39 @@ async function getMarketBookFromBetfair(marketId, selectionId) {
 //   };
 // }
 function checkMatch(order, runner) {
-  let status = "PENDING";
-  let executedPrice = parseFloat(order.price);
+  const availableToBack = (runner.ex?.availableToBack || [])
+    .map(x => ({ price: parseFloat(x.price), size: parseFloat(x.size) }))
+    .filter(x => !isNaN(x.price) && !isNaN(x.size));
 
-  const backs = (runner.ex?.availableToBack || []).map(b => parseFloat(b.price)).filter(p => !isNaN(p));
-  const lays  = (runner.ex?.availableToLay || []).map(b => parseFloat(b.price)).filter(p => !isNaN(p));
+  const availableToLay = (runner.ex?.availableToLay || [])
+    .map(x => ({ price: parseFloat(x.price), size: parseFloat(x.size) }))
+    .filter(x => !isNaN(x.price) && !isNaN(x.size));
 
-  if ((order.type === "BACK" && backs.length === 0) || (order.type === "LAY" && lays.length === 0)) {
-    return { matchedSize: 0, status: "PENDING", executedPrice: order.price };
-  }
+  const bestBack = availableToBack[0]?.price;
+  const bestLay = availableToLay[0]?.price;
 
   if (order.type === "BACK") {
-    // ✅ find all market odds >= user price
-    const possibleMatches = backs.filter(b => b >= executedPrice);
-    if (possibleMatches.length > 0) {
-      status = "MATCHED";
-      executedPrice = Math.max(...possibleMatches); // match at highest available ≥ user price
-    } else {
-      status = "PENDING";
+    if (bestLay && bestLay <= order.price) {
+      return {
+        matchedSize: order.size,
+        status: "MATCHED",
+        executedPrice: bestLay
+      };
     }
   } else if (order.type === "LAY") {
-    // ✅ find all market odds <= user price
-    const possibleMatches = lays.filter(l => l <= executedPrice);
-    if (possibleMatches.length > 0) {
-      status = "MATCHED";
-      executedPrice = Math.min(...possibleMatches); // match at lowest available ≤ user price
-    } else {
-      status = "PENDING";
+    if (bestBack && bestBack >= order.price) {
+      return {
+        matchedSize: order.size,
+        status: "MATCHED",
+        executedPrice: bestBack
+      };
     }
   }
 
   return {
-    matchedSize: status === "MATCHED" ? order.size : 0,
-    status,
-    executedPrice
+    matchedSize: 0,
+    status: "PENDING",
+    executedPrice: order.price
   };
 }
 
@@ -864,7 +863,6 @@ router.post("/", authMiddleware(), async (req, res) => {
     const totalPositiveProfit = teamProfits.reduce((a, b) => a + b, 0);
     const availableForLay = walletBalance + totalPositiveProfit;
 
-    // Attach event details
     await Promise.all(
       orders.map(async (order) => {
         const { eventName, category } = await getEventDetailsFromBetfair(order.marketId);
@@ -873,7 +871,6 @@ router.post("/", authMiddleware(), async (req, res) => {
       })
     );
 
-    // Normalize orders
     const normalizedOrders = orders.map((order) => {
       const price = parseFloat(order.price);
       const size = parseFloat(order.size);
@@ -894,7 +891,6 @@ router.post("/", authMiddleware(), async (req, res) => {
       };
     });
 
-    // Tentative liability check
     const tentativeAll = [...(dbUser.orders || []), ...normalizedOrders];
     const tentativeSelections = [...new Set(tentativeAll.map(b => String(b.selectionId)))];
     const tentativeTeamPnL = {};
@@ -910,15 +906,12 @@ router.post("/", authMiddleware(), async (req, res) => {
         tentativeSelections.forEach(o => { if (o !== sel) tentativeTeamPnL[o] += size; });
       }
     }
-
     let tentativeLiability = 0;
     for (const v of Object.values(tentativeTeamPnL)) if (v < 0) tentativeLiability += Math.abs(v);
-
     if (tentativeLiability > availableForLay) {
       return res.status(400).json({ error: "Insufficient funds for this bet (tentative check)" });
     }
 
-    // Insert orders and transaction
     await usersCollection.updateOne(
       { _id: new ObjectId(user._id) },
       {
@@ -926,14 +919,13 @@ router.post("/", authMiddleware(), async (req, res) => {
           orders: { $each: normalizedOrders },
           transactions: {
             type: "BET_PLACED",
-            amount: -tentativeLiability,
+            amount: 0 - tentativeLiability,
             created_at: new Date()
           }
         }
       }
     );
 
-    // Update each order with checkMatch
     for (let order of normalizedOrders) {
       const runner = await getMarketBookFromBetfair(order.marketId, order.selectionId);
       if (!runner) continue;
@@ -960,12 +952,12 @@ router.post("/", authMiddleware(), async (req, res) => {
       }
     }
 
-    // Recalculate liability in background
+    // 🔹 Run recalc in background to prevent frontend hanging
     recalculateUserLiableAndPnL(user._id)
       .then(() => console.log("✅ Liability recalculated for user:", user._id))
       .catch((err) => console.error("❌ Recalc error:", err));
 
-    // Respond
+    // 🔹 Immediate response
     res.status(200).json({
       message: "Bet placed successfully",
       orders: normalizedOrders
@@ -976,8 +968,6 @@ router.post("/", authMiddleware(), async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
-
-
 
 
 // --- Helper: recalculateUserLiableAndPnL (uses ALL active orders) ---
