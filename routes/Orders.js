@@ -361,41 +361,37 @@ function checkMatch(order, runner) {
   const rawLays  = runner.ex?.availableToLay  || [];
 
   const backs = rawBacks.map(b => parseFloat(b.price)).filter(p => !isNaN(p));
-  const lays  = rawLays.map(l => parseFloat(l.price)).filter(p => !isNaN(p));
+  const lays  = rawLays.map(b => parseFloat(b.price)).filter(p => !isNaN(p));
 
   if (backs.length === 0 && lays.length === 0) {
     return { matchedSize: 0, status: "PENDING", executedPrice: order.price };
   }
 
   if (order.type === "BACK") {
-    const minBack = Math.min(...backs);
     const maxBack = Math.max(...backs);
+    const minBack = Math.min(...backs);
 
-    if (executedPrice > maxBack) { // higher than max → MATCHED
+    if (executedPrice > maxBack) { // user chose higher than max → MATCHED at max
       status = "MATCHED";
       executedPrice = maxBack;
-    } else if (executedPrice < minBack) { // lower than min → PENDING
+    } else if (executedPrice < minBack) { // user chose lower than min → PENDING
       status = "PENDING";
-    } else { // in range → MATCHED at closest >= user price
-      const eligible = backs.filter(p => p >= executedPrice);
-      executedPrice = Math.min(...eligible);
+    } else { // in range → always match at max available
       status = "MATCHED";
+      executedPrice = maxBack;
     }
-  }
-
-  else if (order.type === "LAY") {
+  } else if (order.type === "LAY") {
     const minLay = Math.min(...lays);
     const maxLay = Math.max(...lays);
 
-    if (executedPrice < minLay) { // lower than min → MATCHED
+    if (executedPrice < minLay) { // user chose lower than min → MATCHED at min
       status = "MATCHED";
       executedPrice = minLay;
-    } else if (executedPrice > maxLay) { // higher than max → PENDING
+    } else if (executedPrice > maxLay) { // user chose higher than max → PENDING
       status = "PENDING";
-    } else { // in range → MATCHED at closest <= user price
-      const eligible = lays.filter(p => p <= executedPrice);
-      executedPrice = Math.max(...eligible);
+    } else { // in range → always match at min available
       status = "MATCHED";
+      executedPrice = minLay;
     }
   }
 
