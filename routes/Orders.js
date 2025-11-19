@@ -356,13 +356,21 @@ async function getMarketBookFromBetfair(marketId, selectionId) {
 function checkMatch(order, runner) {
   let status = "PENDING";
   let executedPrice = parseFloat(order.price);
+  const availableToBack = (runner.ex?.availableToBack || [])
+    .map(x => ({ price: parseFloat(x.price), size: parseFloat(x.size) }))
+    .filter(x => !isNaN(x.price) && !isNaN(x.size));
 
   const backs = (runner.ex?.availableToBack || []).map(b => parseFloat(b.price)).filter(p => !isNaN(p));
   const lays  = (runner.ex?.availableToLay || []).map(b => parseFloat(b.price)).filter(p => !isNaN(p));
+  const availableToLay = (runner.ex?.availableToLay || [])
+    .map(x => ({ price: parseFloat(x.price), size: parseFloat(x.size) }))
+    .filter(x => !isNaN(x.price) && !isNaN(x.size));
 
   if ((order.type === "BACK" && backs.length === 0) || (order.type === "LAY" && lays.length === 0)) {
     return { matchedSize: 0, status: "PENDING", executedPrice: order.price };
   }
+  const bestBack = availableToBack[0]?.price;
+  const bestLay = availableToLay[0]?.price;
 
   if (order.type === "BACK") {
     // ✅ find all market odds >= user price
@@ -372,6 +380,12 @@ function checkMatch(order, runner) {
       executedPrice = Math.max(...possibleMatches); // match at highest available ≥ user price
     } else {
       status = "PENDING";
+    if (bestLay && bestLay <= order.price) {
+      return {
+        matchedSize: order.size,
+        status: "MATCHED",
+        executedPrice: bestLay
+      };
     }
   } else if (order.type === "LAY") {
     // ✅ find all market odds <= user price
@@ -381,6 +395,12 @@ function checkMatch(order, runner) {
       executedPrice = Math.min(...possibleMatches); // match at lowest available ≤ user price
     } else {
       status = "PENDING";
+    if (bestBack && bestBack >= order.price) {
+      return {
+        matchedSize: order.size,
+        status: "MATCHED",
+        executedPrice: bestBack
+      };
     }
   }
 
@@ -388,9 +408,11 @@ function checkMatch(order, runner) {
     matchedSize: status === "MATCHED" ? order.size : 0,
     status,
     executedPrice
+    matchedSize: 0,
+    status: "PENDING",
+    executedPrice: order.price
   };
 }
-
 // GET /orders/event
 router.get("/event", (req, res) => {
   try {
