@@ -365,22 +365,16 @@ function checkMatch(order, runner) {
   }
 
   if (order.type === "BACK") {
-    const maxBack = Math.max(...backs);
-    // ✅ Match if market has any odd >= user price
-    if (maxBack >= executedPrice) {
+    const matchable = backs.find(p => p >= executedPrice);
+    if (matchable !== undefined) {
       status = "MATCHED";
-      executedPrice = maxBack; // always match at highest available
-    } else {
-      status = "PENDING";
+      executedPrice = matchable;
     }
   } else if (order.type === "LAY") {
-    const minLay = Math.min(...lays);
-    // ✅ Match if market has any odd <= user price
-    if (minLay <= executedPrice) {
+    const matchable = lays.find(p => p <= executedPrice);
+    if (matchable !== undefined) {
       status = "MATCHED";
-      executedPrice = minLay; // always match at lowest available
-    } else {
-      status = "PENDING";
+      executedPrice = matchable;
     }
   }
 
