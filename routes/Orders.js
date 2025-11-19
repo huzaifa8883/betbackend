@@ -363,31 +363,20 @@ function checkMatch(order, runner) {
   const backs = rawBacks.map(b => parseFloat(b.price)).filter(p => !isNaN(p));
   const lays  = rawLays.map(l => parseFloat(l.price)).filter(p => !isNaN(p));
 
-  // No data → can't match anything
   if (backs.length === 0 && lays.length === 0) {
-    return {
-      matchedSize: 0,
-      status: "PENDING",
-      executedPrice: order.price
-    };
+    return { matchedSize: 0, status: "PENDING", executedPrice: order.price };
   }
 
   if (order.type === "BACK") {
+    const minBack = Math.min(...backs);
+    const maxBack = Math.max(...backs);
 
-    const bestBack = Math.min(...backs);  // lowest available back price
-    const worstBack = Math.max(...backs); // highest available back price
-
-    // If user wants BETTER odds than market → pending
-    if (executedPrice < bestBack) {
-      status = "PENDING";
-    }
-    // If user accepts WORSE odds → match at worst available
-    else if (executedPrice > worstBack) {
+    if (executedPrice > maxBack) { // higher than max → MATCHED
       status = "MATCHED";
-      executedPrice = worstBack;
-    }
-    // Otherwise match at closest available >= user price
-    else {
+      executedPrice = maxBack;
+    } else if (executedPrice < minBack) { // lower than min → PENDING
+      status = "PENDING";
+    } else { // in range → MATCHED at closest >= user price
       const eligible = backs.filter(p => p >= executedPrice);
       executedPrice = Math.min(...eligible);
       status = "MATCHED";
@@ -395,21 +384,15 @@ function checkMatch(order, runner) {
   }
 
   else if (order.type === "LAY") {
+    const minLay = Math.min(...lays);
+    const maxLay = Math.max(...lays);
 
-    const bestLay = Math.min(...lays);  // lowest available lay price
-    const worstLay = Math.max(...lays); // highest available lay price
-
-    // If user wants BETTER odds than market → pending
-    if (executedPrice > worstLay) {
-      status = "PENDING";
-    }
-    // If user accepts WORSE odds → match at best available
-    else if (executedPrice < bestLay) {
+    if (executedPrice < minLay) { // lower than min → MATCHED
       status = "MATCHED";
-      executedPrice = bestLay;
-    }
-    // Otherwise match at closest available <= user price
-    else {
+      executedPrice = minLay;
+    } else if (executedPrice > maxLay) { // higher than max → PENDING
+      status = "PENDING";
+    } else { // in range → MATCHED at closest <= user price
       const eligible = lays.filter(p => p <= executedPrice);
       executedPrice = Math.max(...eligible);
       status = "MATCHED";
@@ -422,7 +405,6 @@ function checkMatch(order, runner) {
     executedPrice
   };
 }
-
 
 
 // GET /orders/event
