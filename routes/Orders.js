@@ -365,20 +365,20 @@ function checkMatch(order, runner) {
   }
 
   if (order.type === "BACK") {
-    const maxBack = Math.max(...backs);
-    // ✅ Match if market has any odd >= user price
-    if (maxBack >= executedPrice) {
+    // ✅ find all market odds >= user price
+    const possibleMatches = backs.filter(b => b >= executedPrice);
+    if (possibleMatches.length > 0) {
       status = "MATCHED";
-      executedPrice = maxBack; // always match at highest available
+      executedPrice = Math.max(...possibleMatches); // match at highest available ≥ user price
     } else {
       status = "PENDING";
     }
   } else if (order.type === "LAY") {
-    const minLay = Math.min(...lays);
-    // ✅ Match if market has any odd <= user price
-    if (minLay <= executedPrice) {
+    // ✅ find all market odds <= user price
+    const possibleMatches = lays.filter(l => l <= executedPrice);
+    if (possibleMatches.length > 0) {
       status = "MATCHED";
-      executedPrice = minLay; // always match at lowest available
+      executedPrice = Math.min(...possibleMatches); // match at lowest available ≤ user price
     } else {
       status = "PENDING";
     }
@@ -390,6 +390,7 @@ function checkMatch(order, runner) {
     executedPrice
   };
 }
+
 
 
 
