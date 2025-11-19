@@ -864,6 +864,7 @@ router.post("/", authMiddleware(), async (req, res) => {
     const totalPositiveProfit = teamProfits.reduce((a, b) => a + b, 0);
     const availableForLay = walletBalance + totalPositiveProfit;
 
+    // Attach event details
     await Promise.all(
       orders.map(async (order) => {
         const { eventName, category } = await getEventDetailsFromBetfair(order.marketId);
@@ -872,6 +873,7 @@ router.post("/", authMiddleware(), async (req, res) => {
       })
     );
 
+    // Normalize orders
     const normalizedOrders = orders.map((order) => {
       const price = parseFloat(order.price);
       const size = parseFloat(order.size);
@@ -892,6 +894,7 @@ router.post("/", authMiddleware(), async (req, res) => {
       };
     });
 
+    // Tentative liability check
     const tentativeAll = [...(dbUser.orders || []), ...normalizedOrders];
     const tentativeSelections = [...new Set(tentativeAll.map(b => String(b.selectionId)))];
     const tentativeTeamPnL = {};
@@ -907,12 +910,15 @@ router.post("/", authMiddleware(), async (req, res) => {
         tentativeSelections.forEach(o => { if (o !== sel) tentativeTeamPnL[o] += size; });
       }
     }
+
     let tentativeLiability = 0;
     for (const v of Object.values(tentativeTeamPnL)) if (v < 0) tentativeLiability += Math.abs(v);
+
     if (tentativeLiability > availableForLay) {
       return res.status(400).json({ error: "Insufficient funds for this bet (tentative check)" });
     }
 
+    // Insert orders and transaction
     await usersCollection.updateOne(
       { _id: new ObjectId(user._id) },
       {
@@ -920,13 +926,14 @@ router.post("/", authMiddleware(), async (req, res) => {
           orders: { $each: normalizedOrders },
           transactions: {
             type: "BET_PLACED",
-            amount: 0 - tentativeLiability,
+            amount: -tentativeLiability,
             created_at: new Date()
           }
         }
       }
     );
 
+    // Update each order with checkMatch
     for (let order of normalizedOrders) {
       const runner = await getMarketBookFromBetfair(order.marketId, order.selectionId);
       if (!runner) continue;
@@ -953,12 +960,12 @@ router.post("/", authMiddleware(), async (req, res) => {
       }
     }
 
-    // 🔹 Run recalc in background to prevent frontend hanging
+    // Recalculate liability in background
     recalculateUserLiableAndPnL(user._id)
       .then(() => console.log("✅ Liability recalculated for user:", user._id))
       .catch((err) => console.error("❌ Recalc error:", err));
 
-    // 🔹 Immediate response
+    // Respond
     res.status(200).json({
       message: "Bet placed successfully",
       orders: normalizedOrders
@@ -969,6 +976,7 @@ router.post("/", authMiddleware(), async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
 
 
 
