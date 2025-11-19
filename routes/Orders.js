@@ -1064,15 +1064,21 @@ async function recalculateUserLiableAndPnL(userId) {
 async function refreshPendingOrders(userId, marketId, runnerData) {
   try {
     const usersCollection = getUsersCollection();
-    const user = await usersCollection.findOne({ _id: new ObjectId(userId) });
-    if (!user) return;
 
-    const pendingOrders = (user.orders || []).filter(
+    // Only fetch pending orders, not full user
+    const user = await usersCollection.findOne(
+      { _id: new ObjectId(userId) },
+      { projection: { orders: 1 } }
+    );
+    if (!user || !user.orders) return;
+
+    const pendingOrders = user.orders.filter(
       o => o.status === "PENDING" && o.marketId === marketId
     );
     if (pendingOrders.length === 0) return;
 
-    let updated = false;
+    let hasUpdates = false;
+    const updates = [];
 
     for (const order of pendingOrders) {
       const runner = runnerData.find(r => r.selectionId === order.selectionId);
@@ -1081,29 +1087,38 @@ async function refreshPendingOrders(userId, marketId, runnerData) {
       const { matchedSize, status, executedPrice } = checkMatch(order, runner);
 
       if (status !== order.status) {
+        hasUpdates = true;
+
         order.matched = matchedSize;
         order.status = status;
         order.price = executedPrice;
         order.updated_at = new Date();
-        updated = true;
 
-        global.io.to("match_" + marketId).emit("ordersUpdated", {
-          userId,
-          newOrders: [{
-            ...order,
-            matched: matchedSize,
-            status,
-            price: executedPrice
-          }]
-        });
+        updates.push({ ...order });
       }
     }
 
-    if (updated) {
+    if (hasUpdates) {
+      // Bulk update only modified orders
       await usersCollection.updateOne(
         { _id: new ObjectId(userId) },
-        { $set: { orders: user.orders } }
+        {
+          $set: {
+            "orders.$[elem]": updates[0] // first matched order
+          }
+        },
+        {
+          arrayFilters: [
+            { "elem._id": updates[0]._id } // match order by id
+          ]
+        }
       );
+
+      // If multiple orders updated, send all in one emit
+      global.io.to("match_" + marketId).emit("ordersUpdated", {
+        userId,
+        newOrders: updates
+      });
     }
   } catch (err) {
     console.error("refreshPendingOrders error:", err);
@@ -1204,8 +1219,12 @@ async function settleEventBets(eventId, winningSelectionId) {
   console.log("🎯 All matched bets settled for event:", eventId);
 }
 
+let pollingStarted = false;
 
 function startMarketPolling() {
+  if (pollingStarted) return;
+  pollingStarted = true;
+
   const POLL_INTERVAL = 5000;
 
   setInterval(async () => {
@@ -1215,33 +1234,30 @@ function startMarketPolling() {
       if (!active.length) return;
 
       for (const { marketId } of active) {
+
         const marketBook = await getMarketBookFromBetfair(marketId);
         if (!marketBook?.runners) continue;
 
         const usersCollection = getUsersCollection();
-        const usersWithPending = await usersCollection
-          .aggregate([
-            { $match: { "orders.marketId": marketId, "orders.status": { $in: ["PENDING", "MATCHED"] } } },
-            { $project: { _id: 1 } }
-          ])
-          .toArray();
 
-        for (const { _id } of usersWithPending) {
-          await refreshPendingOrders(_id.toString(), marketId, marketBook.runners);
-        }
+        const usersWithPending = await usersCollection.find(
+          { "orders.marketId": marketId, "orders.status": "PENDING" },
+          { projection: { _id: 1 } }
+        ).toArray();
 
-        // Cleanup if no pending orders remain
-        const stillPending = await usersCollection.countDocuments({
-          "orders.marketId": marketId,
-          "orders.status": { $in: ["PENDING", "MATCHED"] }
-        });
-
-        if (stillPending === 0) {
+        if (!usersWithPending.length) {
           await activeMarketsCollection.updateOne(
             { marketId },
             { $set: { hasPending: false } }
           );
+          continue;
         }
+
+        await Promise.all(
+          usersWithPending.map(u =>
+            refreshPendingOrders(u._id.toString(), marketId, marketBook.runners)
+          )
+        );
       }
     } catch (err) {
       console.error("Polling error:", err);
@@ -1249,7 +1265,6 @@ function startMarketPolling() {
   }, POLL_INTERVAL);
 }
 
-// ✅ Call this once to start polling
 startMarketPolling();
 
 // track order
@@ -1487,5 +1502,5 @@ router.get("/with-category", authMiddleware(), async (req, res) => {
 module.exports = {
   router,
   settleEventBets,
-  startMarketPolling
+  
 };
