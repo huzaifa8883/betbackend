@@ -371,27 +371,23 @@ function checkMatch(order, runner) {
     const maxBack = Math.max(...backs);
     const minBack = Math.min(...backs);
 
-    if (executedPrice > maxBack) { // user chose higher than max → MATCHED at max
-      status = "MATCHED";
-      executedPrice = maxBack;
-    } else if (executedPrice < minBack) { // user chose lower than min → PENDING
-      status = "PENDING";
-    } else { // in range → always match at max available
-      status = "MATCHED";
-      executedPrice = maxBack;
+    // 🔹 Pending bet ka update logic
+    if (executedPrice >= minBack) {
+      status = "MATCHED";           // ab market odd user ke bet price ke barabar ya chhota hai → match
+      executedPrice = maxBack;      // always match at market max
+    } else {
+      status = "PENDING";           // abhi bhi market odd user se chhota → pending
     }
   } else if (order.type === "LAY") {
     const minLay = Math.min(...lays);
     const maxLay = Math.max(...lays);
 
-    if (executedPrice < minLay) { // user chose lower than min → MATCHED at min
-      status = "MATCHED";
-      executedPrice = minLay;
-    } else if (executedPrice > maxLay) { // user chose higher than max → PENDING
-      status = "PENDING";
-    } else { // in range → always match at min available
-      status = "MATCHED";
-      executedPrice = minLay;
+    // 🔹 Pending bet ka update logic
+    if (executedPrice <= maxLay) {
+      status = "MATCHED";           // ab market odd user ke bet price ke barabar ya bada hai → match
+      executedPrice = minLay;       // always match at market min
+    } else {
+      status = "PENDING";           // abhi bhi market odd user se bada → pending
     }
   }
 
@@ -401,6 +397,7 @@ function checkMatch(order, runner) {
     executedPrice
   };
 }
+
 
 
 // GET /orders/event
@@ -1078,7 +1075,6 @@ async function refreshPendingOrders(userId, marketId, runnerData) {
   try {
     const usersCollection = getUsersCollection();
     const user = await usersCollection.findOne({ _id: new ObjectId(userId) });
-
     if (!user) return;
 
     const pendingOrders = (user.orders || []).filter(
@@ -1093,21 +1089,27 @@ async function refreshPendingOrders(userId, marketId, runnerData) {
 
       const { matchedSize, status, executedPrice } = checkMatch(order, runner);
 
-      order.matched = matchedSize;
-      order.status = status;
-      order.price = executedPrice;
+      // Only update if status changed from PENDING → MATCHED
+      if (status !== order.status) {
+        order.matched = matchedSize;
+        order.status = status;
+        order.price = executedPrice;
+        order.updated_at = new Date();
 
-      global.io.to("match_" + marketId).emit("ordersUpdated", {
-        userId,
-        newOrders: [{
-          ...order,
-          matched: matchedSize,
-          status,
-          price: executedPrice
-        }]
-      });
+        // Emit update to frontend
+        global.io.to("match_" + marketId).emit("ordersUpdated", {
+          userId,
+          newOrders: [{
+            ...order,
+            matched: matchedSize,
+            status,
+            price: executedPrice
+          }]
+        });
+      }
     }
 
+    // Bulk update back to DB
     await usersCollection.updateOne(
       { _id: new ObjectId(userId) },
       { $set: { orders: user.orders } }
@@ -1241,7 +1243,7 @@ function startMarketPolling() {
           await refreshPendingOrders(_id.toString(), marketId, marketBook.runners);
         }
 
-        // Cleanup: if no pending, mark inactive
+        // Cleanup: if no pending orders left, mark inactive
         const stillPending = await usersCollection.countDocuments({
           "orders.marketId": marketId,
           "orders.status": { $in: ["PENDING", "PARTIALLY_MATCHED"] }
@@ -1259,7 +1261,6 @@ function startMarketPolling() {
     }
   }, POLL_INTERVAL);
 }
-
 // track order
 // PATCH /orders/request/:requestId
 router.patch("/request/:requestId", authMiddleware(), async (req, res) => {
