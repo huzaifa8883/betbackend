@@ -356,51 +356,31 @@ async function getMarketBookFromBetfair(marketId, selectionId) {
 function checkMatch(order, runner) {
   let status = "PENDING";
   let executedPrice = parseFloat(order.price);
-  const availableToBack = (runner.ex?.availableToBack || [])
-    .map(x => ({ price: parseFloat(x.price), size: parseFloat(x.size) }))
-    .filter(x => !isNaN(x.price) && !isNaN(x.size));
 
   const backs = (runner.ex?.availableToBack || []).map(b => parseFloat(b.price)).filter(p => !isNaN(p));
   const lays  = (runner.ex?.availableToLay || []).map(b => parseFloat(b.price)).filter(p => !isNaN(p));
-  const availableToLay = (runner.ex?.availableToLay || [])
-    .map(x => ({ price: parseFloat(x.price), size: parseFloat(x.size) }))
-    .filter(x => !isNaN(x.price) && !isNaN(x.size));
 
   if ((order.type === "BACK" && backs.length === 0) || (order.type === "LAY" && lays.length === 0)) {
     return { matchedSize: 0, status: "PENDING", executedPrice: order.price };
   }
-  const bestBack = availableToBack[0]?.price;
-  const bestLay = availableToLay[0]?.price;
 
   if (order.type === "BACK") {
-    // ✅ find all market odds >= user price
-    const possibleMatches = backs.filter(b => b >= executedPrice);
-    if (possibleMatches.length > 0) {
+    const maxBack = Math.max(...backs);
+    // ✅ Match if market has any odd >= user price
+    if (maxBack >= executedPrice) {
       status = "MATCHED";
-      executedPrice = Math.max(...possibleMatches); // match at highest available ≥ user price
+      executedPrice = maxBack; // always match at highest available
     } else {
       status = "PENDING";
-    if (bestLay && bestLay <= order.price) {
-      return {
-        matchedSize: order.size,
-        status: "MATCHED",
-        executedPrice: bestLay
-      };
     }
   } else if (order.type === "LAY") {
-    // ✅ find all market odds <= user price
-    const possibleMatches = lays.filter(l => l <= executedPrice);
-    if (possibleMatches.length > 0) {
+    const minLay = Math.min(...lays);
+    // ✅ Match if market has any odd <= user price
+    if (minLay <= executedPrice) {
       status = "MATCHED";
-      executedPrice = Math.min(...possibleMatches); // match at lowest available ≤ user price
+      executedPrice = minLay; // always match at lowest available
     } else {
       status = "PENDING";
-    if (bestBack && bestBack >= order.price) {
-      return {
-        matchedSize: order.size,
-        status: "MATCHED",
-        executedPrice: bestBack
-      };
     }
   }
 
@@ -408,11 +388,9 @@ function checkMatch(order, runner) {
     matchedSize: status === "MATCHED" ? order.size : 0,
     status,
     executedPrice
-    matchedSize: 0,
-    status: "PENDING",
-    executedPrice: order.price
   };
 }
+
 // GET /orders/event
 router.get("/event", (req, res) => {
   try {
