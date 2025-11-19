@@ -366,28 +366,21 @@ function checkMatch(order, runner) {
 
   if (order.type === "BACK") {
     const maxBack = Math.max(...backs);
-    const minBack = Math.min(...backs);
-
-    if (executedPrice > maxBack) {
-      // User chose too high → unmatched
-      status = "PENDING";
-    } else {
-      // Match at highest available odd ≤ maxBack
+    // ✅ Match if market has any odd >= user price
+    if (maxBack >= executedPrice) {
       status = "MATCHED";
-      executedPrice = maxBack;
+      executedPrice = maxBack; // always match at highest available
+    } else {
+      status = "PENDING";
     }
-
   } else if (order.type === "LAY") {
     const minLay = Math.min(...lays);
-    const maxLay = Math.max(...lays);
-
-    if (executedPrice < minLay) {
-      // User chose too low → unmatched
-      status = "PENDING";
-    } else {
-      // Match at lowest available odd ≥ minLay
+    // ✅ Match if market has any odd <= user price
+    if (minLay <= executedPrice) {
       status = "MATCHED";
-      executedPrice = minLay;
+      executedPrice = minLay; // always match at lowest available
+    } else {
+      status = "PENDING";
     }
   }
 
@@ -397,6 +390,7 @@ function checkMatch(order, runner) {
     executedPrice
   };
 }
+
 
 
 // GET /orders/event
@@ -1230,7 +1224,7 @@ function startMarketPolling() {
         const usersCollection = getUsersCollection();
         const usersWithPending = await usersCollection
           .aggregate([
-            { $match: { "orders.marketId": marketId, "orders.status": { $in: ["PENDING", "PARTIALLY_MATCHED"] } } },
+            { $match: { "orders.marketId": marketId, "orders.status": { $in: ["PENDING", "MATCHED"] } } },
             { $project: { _id: 1 } }
           ])
           .toArray();
@@ -1242,7 +1236,7 @@ function startMarketPolling() {
         // Cleanup if no pending orders remain
         const stillPending = await usersCollection.countDocuments({
           "orders.marketId": marketId,
-          "orders.status": { $in: ["PENDING", "PARTIALLY_MATCHED"] }
+          "orders.status": { $in: ["PENDING", "MATCHED"] }
         });
 
         if (stillPending === 0) {
