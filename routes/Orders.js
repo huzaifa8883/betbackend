@@ -365,16 +365,18 @@ function checkMatch(order, runner) {
   }
 
   if (order.type === "BACK") {
-    const matchable = backs.find(p => p >= executedPrice);
-    if (matchable !== undefined) {
+    // Match at the closest back price >= user price
+    const suitableBacks = backs.filter(p => p >= executedPrice);
+    if (suitableBacks.length) {
+      executedPrice = Math.min(...suitableBacks); // closest ≥ user price
       status = "MATCHED";
-      executedPrice = matchable;
     }
   } else if (order.type === "LAY") {
-    const matchable = lays.find(p => p <= executedPrice);
-    if (matchable !== undefined) {
+    // Match at the closest lay price <= user price
+    const suitableLays = lays.filter(p => p <= executedPrice);
+    if (suitableLays.length) {
+      executedPrice = Math.max(...suitableLays); // closest ≤ user price
       status = "MATCHED";
-      executedPrice = matchable;
     }
   }
 
@@ -384,6 +386,7 @@ function checkMatch(order, runner) {
     executedPrice
   };
 }
+
 
 // GET /orders/event
 router.get("/event", (req, res) => {
