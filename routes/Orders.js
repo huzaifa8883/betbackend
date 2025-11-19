@@ -357,13 +357,10 @@ function checkMatch(order, runner) {
   let status = "PENDING";
   let executedPrice = parseFloat(order.price);
 
-  const rawBacks = runner.ex?.availableToBack || [];
-  const rawLays  = runner.ex?.availableToLay  || [];
+  const backs = (runner.ex?.availableToBack || []).map(b => parseFloat(b.price)).filter(p => !isNaN(p));
+  const lays  = (runner.ex?.availableToLay || []).map(b => parseFloat(b.price)).filter(p => !isNaN(p));
 
-  const backs = rawBacks.map(b => parseFloat(b.price)).filter(p => !isNaN(p));
-  const lays  = rawLays.map(b => parseFloat(b.price)).filter(p => !isNaN(p));
-
-  if (backs.length === 0 && lays.length === 0) {
+  if ((order.type === "BACK" && backs.length === 0) || (order.type === "LAY" && lays.length === 0)) {
     return { matchedSize: 0, status: "PENDING", executedPrice: order.price };
   }
 
@@ -371,23 +368,20 @@ function checkMatch(order, runner) {
     const maxBack = Math.max(...backs);
     const minBack = Math.min(...backs);
 
-    // 🔹 Pending bet ka update logic
-    if (executedPrice >= minBack) {
-      status = "MATCHED";           // ab market odd user ke bet price ke barabar ya chhota hai → match
-      executedPrice = maxBack;      // always match at market max
-    } else {
-      status = "PENDING";           // abhi bhi market odd user se chhota → pending
+    // ✅ Pending bet should match if market odd >= user price
+    if (maxBack >= executedPrice) {
+      status = "MATCHED";
+      executedPrice = Math.min(executedPrice, maxBack); // match at user price or max available
     }
+
   } else if (order.type === "LAY") {
     const minLay = Math.min(...lays);
     const maxLay = Math.max(...lays);
 
-    // 🔹 Pending bet ka update logic
-    if (executedPrice <= maxLay) {
-      status = "MATCHED";           // ab market odd user ke bet price ke barabar ya bada hai → match
-      executedPrice = minLay;       // always match at market min
-    } else {
-      status = "PENDING";           // abhi bhi market odd user se bada → pending
+    // ✅ Pending bet should match if market odd <= user price
+    if (minLay <= executedPrice) {
+      status = "MATCHED";
+      executedPrice = Math.max(executedPrice, minLay); // match at user price or min available
     }
   }
 
