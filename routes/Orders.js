@@ -368,20 +368,26 @@ function checkMatch(order, runner) {
     const maxBack = Math.max(...backs);
     const minBack = Math.min(...backs);
 
-    // ✅ Pending bet should match if market odd >= user price
-    if (maxBack >= executedPrice) {
+    if (executedPrice > maxBack) {
+      // User chose too high → unmatched
+      status = "PENDING";
+    } else {
+      // Match at highest available odd ≤ maxBack
       status = "MATCHED";
-      executedPrice = Math.min(executedPrice, maxBack); // match at user price or max available
+      executedPrice = maxBack;
     }
 
   } else if (order.type === "LAY") {
     const minLay = Math.min(...lays);
     const maxLay = Math.max(...lays);
 
-    // ✅ Pending bet should match if market odd <= user price
-    if (minLay <= executedPrice) {
+    if (executedPrice < minLay) {
+      // User chose too low → unmatched
+      status = "PENDING";
+    } else {
+      // Match at lowest available odd ≥ minLay
       status = "MATCHED";
-      executedPrice = Math.max(executedPrice, minLay); // match at user price or min available
+      executedPrice = minLay;
     }
   }
 
@@ -391,7 +397,6 @@ function checkMatch(order, runner) {
     executedPrice
   };
 }
-
 
 
 // GET /orders/event
@@ -1074,8 +1079,9 @@ async function refreshPendingOrders(userId, marketId, runnerData) {
     const pendingOrders = (user.orders || []).filter(
       o => o.status === "PENDING" && o.marketId === marketId
     );
-
     if (pendingOrders.length === 0) return;
+
+    let updated = false;
 
     for (const order of pendingOrders) {
       const runner = runnerData.find(r => r.selectionId === order.selectionId);
@@ -1083,14 +1089,13 @@ async function refreshPendingOrders(userId, marketId, runnerData) {
 
       const { matchedSize, status, executedPrice } = checkMatch(order, runner);
 
-      // Only update if status changed from PENDING → MATCHED
       if (status !== order.status) {
         order.matched = matchedSize;
         order.status = status;
         order.price = executedPrice;
         order.updated_at = new Date();
+        updated = true;
 
-        // Emit update to frontend
         global.io.to("match_" + marketId).emit("ordersUpdated", {
           userId,
           newOrders: [{
@@ -1103,18 +1108,16 @@ async function refreshPendingOrders(userId, marketId, runnerData) {
       }
     }
 
-    // Bulk update back to DB
-    await usersCollection.updateOne(
-      { _id: new ObjectId(userId) },
-      { $set: { orders: user.orders } }
-    );
-
+    if (updated) {
+      await usersCollection.updateOne(
+        { _id: new ObjectId(userId) },
+        { $set: { orders: user.orders } }
+      );
+    }
   } catch (err) {
     console.error("refreshPendingOrders error:", err);
   }
 }
-
-
 
 /* ------------------------------ SETTLEMENT ------------------------------ */
 async function settleEventBets(eventId, winningSelectionId) {
@@ -1211,15 +1214,14 @@ async function settleEventBets(eventId, winningSelectionId) {
 }
 
 
-
 function startMarketPolling() {
-  const POLL_INTERVAL = 5000; // 5 seconds
+  const POLL_INTERVAL = 5000;
 
   setInterval(async () => {
     try {
       const activeMarketsCollection = getActiveMarketsCollection();
       const active = await activeMarketsCollection.find({ hasPending: true }).toArray();
-      if (active.length === 0) return;
+      if (!active.length) return;
 
       for (const { marketId } of active) {
         const marketBook = await getMarketBookFromBetfair(marketId);
@@ -1237,7 +1239,7 @@ function startMarketPolling() {
           await refreshPendingOrders(_id.toString(), marketId, marketBook.runners);
         }
 
-        // Cleanup: if no pending orders left, mark inactive
+        // Cleanup if no pending orders remain
         const stillPending = await usersCollection.countDocuments({
           "orders.marketId": marketId,
           "orders.status": { $in: ["PENDING", "PARTIALLY_MATCHED"] }
@@ -1255,6 +1257,10 @@ function startMarketPolling() {
     }
   }, POLL_INTERVAL);
 }
+
+// ✅ Call this once to start polling
+startMarketPolling();
+
 // track order
 // PATCH /orders/request/:requestId
 router.patch("/request/:requestId", authMiddleware(), async (req, res) => {
