@@ -1397,7 +1397,12 @@ router.get('/live/tennis', async (req, res) => {
     });
   }
 });
+// Global cache for horse racing data
+let horseCache = [];
+let lastUpdate = 0;
+const POLL_INTERVAL = 30000; // 30 seconds
 
+// Fetch events utility
 async function fetchEvents(eventTypeIds, countries) {
   const sessionToken = await getSessionToken();
   const response = await axios.post(
@@ -1411,8 +1416,8 @@ async function fetchEvents(eventTypeIds, countries) {
             eventTypeIds,
             marketCountries: countries,
             marketStartTime: {
-              from: new Date().toISOString(),
-              to: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() // next 24 hours
+              from: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(), // last 3h
+              to: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()    // next 24h
             }
           }
         },
@@ -1442,7 +1447,7 @@ async function fetchMarketCatalogue(eventIds) {
         params: {
           filter: { 
             eventIds,
-            marketTypeCodes: ['WIN'], // add WIN market for horse racing
+            marketTypeCodes: ['WIN','PLACE','EACH_WAY']
           },
           maxResults: '1000',
           marketProjection: ['EVENT', 'RUNNER_METADATA']
@@ -1495,57 +1500,72 @@ async function fetchMarketBooks(marketIds) {
   return response.data[0]?.result || [];
 }
 
-// Route using router.route()
-router.route('/live/horse')
-  .get(async (req, res) => {
-    try {
-      // Horse racing events (GB, IE, AU, US)
-      const horseEvents = await fetchEvents(['7'], ['GB','IE','AU','US']);
-      if (!horseEvents.length) {
-        return res.status(200).json({ status: 'success', message: 'No horse racing found', data: [] });
-      }
-
-      const eventIds = horseEvents.map(e => e.event.id);
-      const marketCatalogues = await fetchMarketCatalogue(eventIds);
-      if (!marketCatalogues.length) {
-        return res.status(200).json({ status: 'success', message: 'No markets found', data: [] });
-      }
-
-      const marketIds = marketCatalogues.map(m => m.marketId);
-      const marketBooks = await fetchMarketBooks(marketIds);
-
-      let finalData = marketCatalogues.map(market => {
-        const matchingBook = marketBooks.find(b => b.marketId === market.marketId);
-        const event = horseEvents.find(e => e.event.id === market.event.id);
-        return {
-          marketId: market.marketId,
-          match: event?.event.name || 'Unknown Event',
-          startTime: event?.event.openDate || 'N/A',
-          marketStatus: matchingBook?.status || 'UNKNOWN',
-          totalMatched: matchingBook?.totalMatched || 0,
-          selections: market.runners.map(runner => {
-            const runnerBook = matchingBook?.runners.find(b => b.selectionId === runner.selectionId);
-            return {
-              name: runner.runnerName,
-              back: runnerBook?.ex?.availableToBack?.slice(0,3).map(b => ({ price: b.price, size: b.size })) || [],
-              lay: runnerBook?.ex?.availableToLay?.slice(0,3).map(l => ({ price: l.price, size: l.size })) || []
-            };
-          })
-        };
-      });
-
-      // Sort and remove duplicate events (same name + startTime)
-      finalData.sort((a,b) => new Date(a.startTime) - new Date(b.startTime));
-      finalData = finalData.filter((item,index,self) =>
-        index === self.findIndex(t => t.match === item.match && new Date(t.startTime).getTime() === new Date(item.startTime).getTime())
-      );
-
-      res.status(200).json({ status: 'success', count: finalData.length, data: finalData });
-
-    } catch (err) {
-      console.error('❌ Horse Racing API Error:', err.response?.data || err.message);
-      res.status(500).json({ status: 'error', message: 'Failed to fetch horse racing odds', error: err.message });
+// Polling function to update horse cache
+async function updateHorseCache() {
+  try {
+    const horseEvents = await fetchEvents(['7'], ['GB','IE']);
+    if (!horseEvents.length) {
+      horseCache = [];
+      lastUpdate = Date.now();
+      return;
     }
+    const eventIds = horseEvents.map(e => e.event.id);
+    const marketCatalogue = await fetchMarketCatalogue(eventIds);
+    if (!marketCatalogue.length) {
+      horseCache = [];
+      lastUpdate = Date.now();
+      return;
+    }
+    const marketIds = marketCatalogue.map(m => m.marketId);
+    const marketBooks = await fetchMarketBooks(marketIds);
+
+    let finalData = marketCatalogue.map(market => {
+      const matchingBook = marketBooks.find(b => b.marketId === market.marketId);
+      const event = horseEvents.find(e => e.event.id === market.event.id);
+      return {
+        marketId: market.marketId,
+        match: event?.event.name || 'Unknown Event',
+        startTime: event?.event.openDate || 'N/A',
+        marketStatus: matchingBook?.status || 'UNKNOWN',
+        totalMatched: matchingBook?.totalMatched || 0,
+        selections: market.runners.map(runner => {
+          const runnerBook = matchingBook?.runners.find(b => b.selectionId === runner.selectionId);
+          return {
+            name: runner.runnerName,
+            back: runnerBook?.ex?.availableToBack?.slice(0,3).map(b => ({ price: b.price, size: b.size })) || [],
+            lay: runnerBook?.ex?.availableToLay?.slice(0,3).map(l => ({ price: l.price, size: l.size })) || []
+          };
+        })
+      };
+    });
+
+    // Sort and remove duplicates
+    finalData.sort((a,b) => new Date(a.startTime) - new Date(b.startTime));
+    finalData = finalData.filter((item,index,self) =>
+      index === self.findIndex(t => t.match === item.match && new Date(t.startTime).getTime() === new Date(item.startTime).getTime())
+    );
+
+    horseCache = finalData;
+    lastUpdate = Date.now();
+
+  } catch (err) {
+    console.error('❌ Horse Racing API Poll Error:', err.response?.data || err.message);
+  }
+}
+
+// Start polling in background
+setInterval(updateHorseCache, POLL_INTERVAL);
+updateHorseCache(); // initial fetch
+
+// Route
+router.route('/live/horse')
+  .get((req,res) => {
+    res.status(200).json({
+      status: 'success',
+      count: horseCache.length,
+      data: horseCache,
+      lastUpdate: new Date(lastUpdate).toISOString()
+    });
   });
 
 
