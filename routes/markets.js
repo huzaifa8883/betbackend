@@ -1449,7 +1449,7 @@ async function fetchMarketCatalogue(eventIds) {
             eventIds,
             marketTypeCodes: ['WIN','PLACE','EACH_WAY']
           },
-          maxResults: '5000',
+          maxResults: '500',
           marketProjection: ['EVENT', 'RUNNER_METADATA']
         },
         id: 2
