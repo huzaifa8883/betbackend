@@ -2015,142 +2015,175 @@ router.get('/Navigation', async (req, res) => {
 
 // Ab express.listen ki jagah server.listen
 
-router.get('/live/greyhound', async (req, res) => {
-  try {
-    const sessionToken = await getSessionToken();
+// --- GLOBAL CACHE ---
+let greyhoundCache = [];
+let lastUpdateGreyhound = 0;
+const POLL_INTERVAL_GREYHOUND = 30000; // 30 seconds
 
-    // 🐕 Step 1: Fetch greyhound events
-    const eventsResponse = await axios.post(
-      'https://api.betfair.com/exchange/betting/json-rpc/v1',
-      [
-        {
-          jsonrpc: '2.0',
-          method: 'SportsAPING/v1.0/listEvents',
-          params: {
-            filter: {
-              eventTypeIds: ['4339'], // Greyhound Racing
-              marketStartTime: { from: new Date().toISOString() }
+// --- FETCH EVENTS FOR GREYHOUND ---
+async function fetchGreyhoundEvents(eventTypeIds, countries = []) {
+  const sessionToken = await getSessionToken();
+  const response = await axios.post(
+    'https://api.betfair.com/exchange/betting/json-rpc/v1',
+    [
+      {
+        jsonrpc: '2.0',
+        method: 'SportsAPING/v1.0/listEvents',
+        params: {
+          filter: {
+            eventTypeIds,
+            marketCountries: countries.length ? countries : undefined,
+            marketStartTime: {
+              from: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(),
+              to: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
             }
-          },
-          id: 1
-        }
-      ],
-      {
-        headers: {
-          'X-Application': APP_KEY,
-          'X-Authentication': sessionToken,
-          'Content-Type': 'application/json'
-        }
+          }
+        },
+        id: 1
       }
-    );
+    ],
+    {
+      headers: {
+        'X-Application': APP_KEY,
+        'X-Authentication': sessionToken,
+        'Content-Type': 'application/json'
+      }
+    }
+  );
+  return response.data[0]?.result || [];
+}
 
-    const events = eventsResponse?.data?.[0]?.result || [];
+// --- FETCH MARKET CATALOGUE FOR GREYHOUND ---
+async function fetchGreyhoundMarketCatalogue(eventIds) {
+  const sessionToken = await getSessionToken();
+  const response = await axios.post(
+    'https://api.betfair.com/exchange/betting/json-rpc/v1',
+    [
+      {
+        jsonrpc: '2.0',
+        method: 'SportsAPING/v1.0/listMarketCatalogue',
+        params: {
+          filter: { eventIds, marketTypeCodes: ['WIN','PLACE'] },
+          maxResults: '500',
+          marketProjection: ['EVENT', 'RUNNER_METADATA']
+        },
+        id: 2
+      }
+    ],
+    {
+      headers: {
+        'X-Application': APP_KEY,
+        'X-Authentication': sessionToken,
+        'Content-Type': 'application/json'
+      }
+    }
+  );
+
+  let markets = response.data[0]?.result || [];
+  const seen = new Set();
+  markets = markets.filter(m => {
+    if (!m.marketId || seen.has(m.marketId)) return false;
+    seen.add(m.marketId);
+    return true;
+  });
+
+  return markets;
+}
+
+// --- FETCH MARKET BOOKS FOR GREYHOUND ---
+async function fetchGreyhoundMarketBooks(marketIds) {
+  if (!marketIds.length) return [];
+  const sessionToken = await getSessionToken();
+  const response = await axios.post(
+    'https://api.betfair.com/exchange/betting/json-rpc/v1',
+    [
+      {
+        jsonrpc: '2.0',
+        method: 'SportsAPING/v1.0/listMarketBook',
+        params: { marketIds, priceProjection: { priceData: ['EX_BEST_OFFERS'] } },
+        id: 3
+      }
+    ],
+    {
+      headers: {
+        'X-Application': APP_KEY,
+        'X-Authentication': sessionToken,
+        'Content-Type': 'application/json'
+      }
+    }
+  );
+  return response.data[0]?.result || [];
+}
+
+// --- UPDATE GREYHOUND CACHE ---
+async function updateGreyhoundCache() {
+  try {
+    const events = await fetchGreyhoundEvents(['4339'], ['GB','IE','AU','US']);
     if (!events.length) {
-      return res.status(200).json({ status: 'success', message: 'No greyhound events found', data: [] });
+      greyhoundCache = [];
+      lastUpdateGreyhound = Date.now();
+      return;
     }
 
-    const eventIds = events.map(e => e?.event?.id).filter(Boolean);
-
-    // 🐕 Step 2: Fetch market catalogues
-    const catalogueResponse = await axios.post(
-      'https://api.betfair.com/exchange/betting/json-rpc/v1',
-      [
-        {
-          jsonrpc: '2.0',
-          method: 'SportsAPING/v1.0/listMarketCatalogue',
-          params: {
-            filter: { eventIds, marketTypeCodes: ['WIN'] },
-            maxResults: '1000',
-            marketProjection: ['EVENT', 'RUNNER_METADATA']
-          },
-          id: 2
-        }
-      ],
-      {
-        headers: {
-          'X-Application': APP_KEY,
-          'X-Authentication': sessionToken,
-          'Content-Type': 'application/json'
-        }
-      }
-    );
-
-    let marketCatalogues = catalogueResponse?.data?.[0]?.result || [];
-
-    // ✅ Remove duplicates
-    const seen = new Set();
-    marketCatalogues = marketCatalogues.filter(m => {
-      if (!m.marketId || seen.has(m.marketId)) return false;
-      seen.add(m.marketId);
-      return true;
-    });
-
-    const marketIds = marketCatalogues.map(m => m.marketId);
-    if (!marketIds.length) {
-      return res.status(200).json({ status: 'success', message: 'No markets found', data: [] });
+    const eventIds = events.map(e => e.event.id);
+    const marketCatalogue = await fetchGreyhoundMarketCatalogue(eventIds);
+    if (!marketCatalogue.length) {
+      greyhoundCache = [];
+      lastUpdateGreyhound = Date.now();
+      return;
     }
 
-    // 🐕 Step 3: Fetch market books (odds)
-    const bookResponse = await axios.post(
-      'https://api.betfair.com/exchange/betting/json-rpc/v1',
-      [
-        {
-          jsonrpc: '2.0',
-          method: 'SportsAPING/v1.0/listMarketBook',
-          params: {
-            marketIds,
-            priceProjection: { priceData: ['EX_BEST_OFFERS'] }
-          },
-          id: 3
-        }
-      ],
-      {
-        headers: {
-          'X-Application': APP_KEY,
-          'X-Authentication': sessionToken,
-          'Content-Type': 'application/json'
-        }
-      }
-    );
+    const marketIds = marketCatalogue.map(m => m.marketId);
+    const marketBooks = await fetchGreyhoundMarketBooks(marketIds);
 
-    const marketBooks = bookResponse?.data?.[0]?.result || [];
-
-    // 🔄 Combine data safely
-    const finalData = marketCatalogues.map(market => {
+    let finalData = marketCatalogue.map(market => {
       const matchingBook = marketBooks.find(b => b.marketId === market.marketId);
-      const event = events.find(e => e?.event?.id === market?.event?.id);
-
+      const event = events.find(e => e.event.id === market.event.id);
       return {
         marketId: market.marketId,
-        match: event?.event?.name || 'Unknown Event',
-        startTime: event?.event?.openDate || 'N/A',
+        match: event?.event.name || 'Unknown Event',
+        startTime: event?.event.openDate || 'N/A',
+        marketStatus: matchingBook?.status || 'UNKNOWN',
         totalMatched: matchingBook?.totalMatched || 0,
-        selections: (market.runners || []).map(runner => {
-          const runnerBook = matchingBook?.runners?.find(r => r.selectionId === runner.selectionId);
+        selections: market.runners.map(runner => {
+          const runnerBook = matchingBook?.runners.find(b => b.selectionId === runner.selectionId);
           return {
             name: runner.runnerName,
-            back: runnerBook?.ex?.availableToBack?.slice(0, 3).map(b => ({ price: b.price, size: b.size })) || [],
-            lay: runnerBook?.ex?.availableToLay?.slice(0, 3).map(l => ({ price: l.price, size: l.size })) || []
+            back: runnerBook?.ex?.availableToBack?.slice(0,3).map(b => ({ price: b.price, size: b.size })) || [],
+            lay: runnerBook?.ex?.availableToLay?.slice(0,3).map(l => ({ price: l.price, size: l.size })) || []
           };
         })
       };
     });
 
-    // 📅 Sort by start time (ascending)
-    finalData.sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
+    // Sort & remove duplicates
+    finalData.sort((a,b) => new Date(a.startTime) - new Date(b.startTime));
+    finalData = finalData.filter((item,index,self) =>
+      index === self.findIndex(t => t.match === item.match && new Date(t.startTime).getTime() === new Date(item.startTime).getTime())
+    );
 
-    // ✅ Success
-    res.status(200).json({ status: 'success', count: finalData.length, data: finalData });
-
+    greyhoundCache = finalData;
+    lastUpdateGreyhound = Date.now();
   } catch (err) {
-    console.error('❌ Greyhound Racing API Error:', err?.response?.data || err.message);
-    res.status(500).json({
-      status: 'error',
-      message: 'Failed to fetch greyhound racing odds',
-      error: err.message
-    });
+    console.error('❌ Greyhound Racing API Poll Error:', err.response?.data || err.message);
   }
-});
+}
+
+// --- START POLLING ---
+setInterval(updateGreyhoundCache, POLL_INTERVAL_GREYHOUND);
+updateGreyhoundCache(); // initial fetch
+
+// --- ROUTE ---
+router.route('/live/greyhound')
+  .get((req,res) => {
+    res.status(200).json({
+      status: 'success',
+      count: greyhoundCache.length,
+      data: greyhoundCache,
+      lastUpdate: new Date(lastUpdateGreyhound).toISOString()
+    });
+  });
+
 
 
 router.get('/live/:sport', async(req, res) => {
