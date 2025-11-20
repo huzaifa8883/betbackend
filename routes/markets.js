@@ -1503,7 +1503,7 @@ async function fetchMarketBooks(marketIds) {
 // Polling function to update horse cache
 async function updateHorseCache() {
   try {
-    const horseEvents = await fetchEvents(['7'], ['GB','IE','AU','US','FR']);
+    const horseEvents = await fetchEvents(['7'], ['AU','US','FR']);
     if (!horseEvents.length) {
       horseCache = [];
       lastUpdate = Date.now();
