@@ -1449,7 +1449,7 @@ async function fetchMarketCatalogue(eventIds) {
             eventIds,
             marketTypeCodes: ['WIN','PLACE','EACH_WAY']
           },
-          maxResults: '1000',
+          maxResults: '5000',
           marketProjection: ['EVENT', 'RUNNER_METADATA']
         },
         id: 2
@@ -1503,7 +1503,7 @@ async function fetchMarketBooks(marketIds) {
 // Polling function to update horse cache
 async function updateHorseCache() {
   try {
-    const horseEvents = await fetchEvents(['7'], ['GB','IE']);
+    const horseEvents = await fetchEvents(['7'], ['GB','IE','AU','US','FR']);
     if (!horseEvents.length) {
       horseCache = [];
       lastUpdate = Date.now();
