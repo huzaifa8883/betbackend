@@ -1398,181 +1398,152 @@ router.get('/live/tennis', async (req, res) => {
   }
 });
 
-router.get('/live/horse', async (req, res) => {
-  try {
-    const sessionToken = await getSessionToken();
-
-    // 🐎 Step 1: Get horse racing events (last 3 hours + upcoming)
-    const eventsResponse = await axios.post(
-      'https://api.betfair.com/exchange/betting/json-rpc/v1',
-      [
-        {
-          jsonrpc: '2.0',
-          method: 'SportsAPING/v1.0/listEvents',
-          params: {
-            filter: {
-              eventTypeIds: ['7'], // Horse Racing
-              marketCountries: ['GB', 'IE', 'AU'],
-              marketStartTime: {
-                from: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString()
-              }
+async function fetchEvents(eventTypeIds, countries) {
+  const sessionToken = await getSessionToken();
+  const response = await axios.post(
+    'https://api.betfair.com/exchange/betting/json-rpc/v1',
+    [
+      {
+        jsonrpc: '2.0',
+        method: 'SportsAPING/v1.0/listEvents',
+        params: {
+          filter: {
+            eventTypeIds,
+            marketCountries: countries,
+            marketStartTime: {
+              from: new Date().toISOString(),
+              to: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() // next 24 hours
             }
-          },
-          id: 1
-        }
-      ],
-      {
-        headers: {
-          'X-Application': APP_KEY,
-          'X-Authentication': sessionToken,
-          'Content-Type': 'application/json'
-        }
+          }
+        },
+        id: 1
       }
-    );
-
-    const events = eventsResponse.data[0]?.result || [];
-    console.log(`🐎 Horse racing events found: ${events.length}`);
-    if (!events.length) {
-      return res.status(200).json({
-        status: 'success',
-        message: 'No racing found',
-        data: []
-      });
+    ],
+    {
+      headers: {
+        'X-Application': APP_KEY,
+        'X-Authentication': sessionToken,
+        'Content-Type': 'application/json'
+      }
     }
+  );
+  return response.data[0]?.result || [];
+}
 
-    const eventIds = events.map(e => e.event.id);
-
-    // 🐎 Step 2: Get market catalogue (WIN markets)
-    const marketCatalogueResponse = await axios.post(
-      'https://api.betfair.com/exchange/betting/json-rpc/v1',
-      [
-        {
-          jsonrpc: '2.0',
-          method: 'SportsAPING/v1.0/listMarketCatalogue',
-          params: {
-            filter: { eventIds },
-            maxResults: '1000',
-            marketProjection: ['EVENT', 'RUNNER_METADATA']
-          },
-          id: 2
-        }
-      ],
+// Fetch market catalogue
+async function fetchMarketCatalogue(eventIds) {
+  const sessionToken = await getSessionToken();
+  const response = await axios.post(
+    'https://api.betfair.com/exchange/betting/json-rpc/v1',
+    [
       {
-        headers: {
-          'X-Application': APP_KEY,
-          'X-Authentication': sessionToken,
-          'Content-Type': 'application/json'
-        }
+        jsonrpc: '2.0',
+        method: 'SportsAPING/v1.0/listMarketCatalogue',
+        params: {
+          filter: { eventIds },
+          maxResults: '1000',
+          marketProjection: ['EVENT', 'RUNNER_METADATA']
+        },
+        id: 2
       }
-    );
-
-    let marketCatalogues = marketCatalogueResponse.data[0]?.result || [];
-    console.log(`📊 Market catalogues found: ${marketCatalogues.length}`);
-
-    if (!marketCatalogues.length) {
-      return res.status(200).json({
-        status: 'success',
-        message: 'No markets found',
-        data: []
-      });
+    ],
+    {
+      headers: {
+        'X-Application': APP_KEY,
+        'X-Authentication': sessionToken,
+        'Content-Type': 'application/json'
+      }
     }
+  );
+  let markets = response.data[0]?.result || [];
+  const seenMarketIds = new Set();
+  markets = markets.filter(m => {
+    if (seenMarketIds.has(m.marketId)) return false;
+    seenMarketIds.add(m.marketId);
+    return true;
+  });
+  return markets;
+}
 
-    // ✅ Remove duplicate markets by marketId
-    const seenMarketIds = new Set();
-    marketCatalogues = marketCatalogues.filter(market => {
-      if (seenMarketIds.has(market.marketId)) return false;
-      seenMarketIds.add(market.marketId);
-      return true;
-    });
-
-    const marketIds = marketCatalogues.map(m => m.marketId);
-
-    // 🐎 Step 3: Get market books
-    const marketBookResponse = await axios.post(
-      'https://api.betfair.com/exchange/betting/json-rpc/v1',
-      [
-        {
-          jsonrpc: '2.0',
-          method: 'SportsAPING/v1.0/listMarketBook',
-          params: {
-            marketIds,
-            priceProjection: { priceData: ['EX_BEST_OFFERS'] }
-          },
-          id: 3
-        }
-      ],
+// Fetch market books
+async function fetchMarketBooks(marketIds) {
+  const sessionToken = await getSessionToken();
+  const response = await axios.post(
+    'https://api.betfair.com/exchange/betting/json-rpc/v1',
+    [
       {
-        headers: {
-          'X-Application': APP_KEY,
-          'X-Authentication': sessionToken,
-          'Content-Type': 'application/json'
-        }
+        jsonrpc: '2.0',
+        method: 'SportsAPING/v1.0/listMarketBook',
+        params: {
+          marketIds,
+          priceProjection: { priceData: ['EX_BEST_OFFERS'] }
+        },
+        id: 3
       }
-    );
+    ],
+    {
+      headers: {
+        'X-Application': APP_KEY,
+        'X-Authentication': sessionToken,
+        'Content-Type': 'application/json'
+      }
+    }
+  );
+  return response.data[0]?.result || [];
+}
 
-    const marketBooks = marketBookResponse.data[0]?.result || [];
-    console.log(`💰 Market books found: ${marketBooks.length}`);
+// Route using router.route()
+router.route('/live/horse')
+  .get(async (req, res) => {
+    try {
+      // Horse racing events (GB, IE, AU, US)
+      const horseEvents = await fetchEvents(['7'], ['GB','IE','AU','US']);
+      if (!horseEvents.length) {
+        return res.status(200).json({ status: 'success', message: 'No horse racing found', data: [] });
+      }
 
-    // 🔄 Combine event + market + odds data
-    let finalData = marketCatalogues.map(market => {
-      const matchingBook = marketBooks.find(b => b.marketId === market.marketId);
-      const event = events.find(e => e.event.id === market.event.id);
+      const eventIds = horseEvents.map(e => e.event.id);
+      const marketCatalogues = await fetchMarketCatalogue(eventIds);
+      if (!marketCatalogues.length) {
+        return res.status(200).json({ status: 'success', message: 'No markets found', data: [] });
+      }
 
-      return {
-        marketId: market.marketId,
-        match: event?.event.name || 'Unknown Event',
-        startTime: event?.event.openDate || 'N/A',
-        marketStatus: matchingBook?.status || 'UNKNOWN',
-        totalMatched: matchingBook?.totalMatched || 0,
-        selections: market.runners.map(runner => {
-          const runnerBook = matchingBook?.runners.find(b => b.selectionId === runner.selectionId);
-          return {
-            name: runner.runnerName,
-            back:
-              runnerBook?.ex?.availableToBack?.slice(0, 3).map(b => ({
-                price: b.price,
-                size: b.size
-              })) || [],
-            lay:
-              runnerBook?.ex?.availableToLay?.slice(0, 3).map(l => ({
-                price: l.price,
-                size: l.size
-              })) || []
-          };
-        })
-      };
-    });
+      const marketIds = marketCatalogues.map(m => m.marketId);
+      const marketBooks = await fetchMarketBooks(marketIds);
 
-    // 📅 Sort by start time
-    finalData.sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
+      let finalData = marketCatalogues.map(market => {
+        const matchingBook = marketBooks.find(b => b.marketId === market.marketId);
+        const event = horseEvents.find(e => e.event.id === market.event.id);
+        return {
+          marketId: market.marketId,
+          match: event?.event.name || 'Unknown Event',
+          startTime: event?.event.openDate || 'N/A',
+          marketStatus: matchingBook?.status || 'UNKNOWN',
+          totalMatched: matchingBook?.totalMatched || 0,
+          selections: market.runners.map(runner => {
+            const runnerBook = matchingBook?.runners.find(b => b.selectionId === runner.selectionId);
+            return {
+              name: runner.runnerName,
+              back: runnerBook?.ex?.availableToBack?.slice(0,3).map(b => ({ price: b.price, size: b.size })) || [],
+              lay: runnerBook?.ex?.availableToLay?.slice(0,3).map(l => ({ price: l.price, size: l.size })) || []
+            };
+          })
+        };
+      });
 
-    // 🧹 Remove duplicate races (same event name + same startTime)
-    finalData = finalData.filter(
-      (item, index, self) =>
-        index ===
-        self.findIndex(
-          t =>
-            t.match === item.match &&
-            new Date(t.startTime).getTime() === new Date(item.startTime).getTime()
-        )
-    );
+      // Sort and remove duplicate events (same name + startTime)
+      finalData.sort((a,b) => new Date(a.startTime) - new Date(b.startTime));
+      finalData = finalData.filter((item,index,self) =>
+        index === self.findIndex(t => t.match === item.match && new Date(t.startTime).getTime() === new Date(item.startTime).getTime())
+      );
 
-    // ✅ Final response
-    res.status(200).json({
-      status: 'success',
-      count: finalData.length,
-      data: finalData
-    });
+      res.status(200).json({ status: 'success', count: finalData.length, data: finalData });
 
-  } catch (err) {
-    console.error('❌ Horse Racing API Error:', err.response?.data || err.message);
-    res.status(500).json({
-      status: 'error',
-      message: 'Failed to fetch horse racing odds',
-      error: err.message
-    });
-  }
-});
+    } catch (err) {
+      console.error('❌ Horse Racing API Error:', err.response?.data || err.message);
+      res.status(500).json({ status: 'error', message: 'Failed to fetch horse racing odds', error: err.message });
+    }
+  });
 
 
 const sportMap = {
