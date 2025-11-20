@@ -2118,7 +2118,7 @@ async function fetchGreyhoundMarketBooks(marketIds) {
 // --- UPDATE GREYHOUND CACHE ---
 async function updateGreyhoundCache() {
   try {
-    const events = await fetchGreyhoundEvents(['4339'], ['FR','AU','US']);
+    const events = await fetchGreyhoundEvents(['4339'], ['AU']);
     if (!events.length) {
       greyhoundCache = [];
       lastUpdateGreyhound = Date.now();
