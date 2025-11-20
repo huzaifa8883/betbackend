@@ -1440,7 +1440,10 @@ async function fetchMarketCatalogue(eventIds) {
         jsonrpc: '2.0',
         method: 'SportsAPING/v1.0/listMarketCatalogue',
         params: {
-          filter: { eventIds },
+          filter: { 
+            eventIds,
+            marketTypeCodes: ['WIN'], // add WIN market for horse racing
+          },
           maxResults: '1000',
           marketProjection: ['EVENT', 'RUNNER_METADATA']
         },
