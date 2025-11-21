@@ -266,26 +266,20 @@ function checkMatch(order, runner) {
   let status = "UNMATCHED";
   let executedPrice = order.price;
 
-  const backs = runner.ex.availableToBack || [];
-  const lays = runner.ex.availableToLay || [];
+  const backs = runner.ex?.availableToBack || [];
+  const lays = runner.ex?.availableToLay || [];
 
   if (order.type === "BACK" && backs.length > 0) {
-    // Sabse bara back odd (highest)
     const highestBack = Math.max(...backs.map(b => b.price));
-
     if (highestBack >= order.price) {
       executedPrice = highestBack;
-      matchedSize = order.size; // abhi full match (partial ka size check add kar sakte)
+      matchedSize = order.size;
       status = "MATCHED";
     } else {
       status = "UNMATCHED";
     }
-  }
-
-  else if (order.type === "LAY" && lays.length > 0) {
-    // Sabse chhota lay odd (lowest)
+  } else if (order.type === "LAY" && lays.length > 0) {
     const lowestLay = Math.min(...lays.map(l => l.price));
-
     if (lowestLay <= order.price) {
       executedPrice = lowestLay;
       matchedSize = order.size;
@@ -297,8 +291,6 @@ function checkMatch(order, runner) {
 
   return { matchedSize, status, executedPrice };
 }
-
-
 
 
 // GET /orders/event
@@ -752,7 +744,9 @@ router.get("/event", (req, res) => {
 //     res.status(500).json({ error: err.message });
 //   }
 // });
+// --- Router: Place bets (fixed) ---
 router.post("/", authMiddleware(), async (req, res) => {
+  const session = null; // placeholder if you want to use MongoDB transactions
   try {
     const user = req.user;
     if (!user || user.role !== "User") {
@@ -768,11 +762,12 @@ router.post("/", authMiddleware(), async (req, res) => {
     const dbUser = await usersCollection.findOne({ _id: new ObjectId(user._id) });
     if (!dbUser) return res.status(404).json({ error: "User not found" });
 
-    const walletBalance = dbUser.wallet_balance || 0;
+    const walletBalance = Number(dbUser.wallet_balance || 0);
     const teamProfits = Object.values(dbUser.runnerPnL || {}).filter(p => p > 0);
     const totalPositiveProfit = teamProfits.reduce((a, b) => a + b, 0);
     const availableForLay = walletBalance + totalPositiveProfit;
 
+    // enrich orders with event info
     await Promise.all(
       orders.map(async (order) => {
         const { eventName, category } = await getEventDetailsFromBetfair(order.marketId);
@@ -781,6 +776,7 @@ router.post("/", authMiddleware(), async (req, res) => {
       })
     );
 
+    // normalize orders
     const normalizedOrders = orders.map((order) => {
       const price = parseFloat(order.price);
       const size = parseFloat(order.size);
@@ -801,6 +797,9 @@ router.post("/", authMiddleware(), async (req, res) => {
       };
     });
 
+    // -------------------------
+    // Tentative check (calculate TOTAL liability if these orders were added)
+    // -------------------------
     const tentativeAll = [...(dbUser.orders || []), ...normalizedOrders];
     const tentativeSelections = [...new Set(tentativeAll.map(b => String(b.selectionId)))];
     const tentativeTeamPnL = {};
@@ -818,24 +817,53 @@ router.post("/", authMiddleware(), async (req, res) => {
     }
     let tentativeLiability = 0;
     for (const v of Object.values(tentativeTeamPnL)) if (v < 0) tentativeLiability += Math.abs(v);
-    if (tentativeLiability > availableForLay) {
+
+    // current liability
+    const currentLiability = Number(dbUser.liable || 0);
+    const additionalLiability = Math.max(0, tentativeLiability - currentLiability);
+
+    if (additionalLiability > availableForLay) {
       return res.status(400).json({ error: "Insufficient funds for this bet (tentative check)" });
     }
 
-    await usersCollection.updateOne(
-      { _id: new ObjectId(user._id) },
-      {
-        $push: {
-          orders: { $each: normalizedOrders },
-          transactions: {
-            type: "BET_PLACED",
-            amount: 0 - tentativeLiability,
-            created_at: new Date()
-          }
-        }
+    // -------------------------
+    // Persist: push orders + deduct only additional liability from wallet
+    // Use a transaction if your MongoDB supports it. If not, this still works reasonably.
+    // -------------------------
+    // Build transaction object to push (one transaction entry per placement)
+    const tx = {
+      type: "BET_PLACED",
+      amount: -additionalLiability,
+      created_at: new Date(),
+      details: {
+        count: normalizedOrders.length,
+        requestIds: normalizedOrders.map(o => o.requestId)
       }
-    );
+    };
 
+    // Attempt a session transaction if possible (optional)
+    let updatedUser;
+    try {
+      // If you have a replica set and want strict atomic behavior, enable sessions here.
+      await usersCollection.updateOne(
+        { _id: new ObjectId(user._id) },
+        {
+          $push: {
+            orders: { $each: normalizedOrders },
+            transactions: tx
+          },
+          $inc: { wallet_balance: -additionalLiability }
+        }
+      );
+      updatedUser = await usersCollection.findOne({ _id: new ObjectId(user._id) });
+    } catch (err) {
+      console.error("DB update error placing bets:", err);
+      return res.status(500).json({ error: "Database error when placing bets." });
+    }
+
+    // -------------------------
+    // Match each order against market book and update matched status
+    // -------------------------
     for (let order of normalizedOrders) {
       const runner = await getMarketBookFromBetfair(order.marketId, order.selectionId);
       if (!runner) continue;
@@ -862,12 +890,13 @@ router.post("/", authMiddleware(), async (req, res) => {
       }
     }
 
-    // 🔹 Run recalc in background to prevent frontend hanging
-    recalculateUserLiableAndPnL(user._id)
-      .then(() => console.log("✅ Liability recalculated for user:", user._id))
-      .catch((err) => console.error("❌ Recalc error:", err));
+    // -------------------------
+    // Recalculate PnL & liability immediately (synchronously) but DO NOT touch wallet here.
+    // This updates liable and runnerPnL and emits userUpdated.
+    // -------------------------
+    await recalculateUserLiableAndPnL(user._id);
 
-    // 🔹 Immediate response
+    // send response
     res.status(200).json({
       message: "Bet placed successfully",
       orders: normalizedOrders
@@ -879,9 +908,7 @@ router.post("/", authMiddleware(), async (req, res) => {
   }
 });
 
-
-
-// --- Helper: recalculateUserLiableAndPnL (uses ALL active orders) ---
+// --- Helper: recalculateUserLiableAndPnL (UPDATED: does NOT change wallet_balance) ---
 async function recalculateUserLiableAndPnL(userId) {
   const usersCollection = getUsersCollection();
   const user = await usersCollection.findOne({ _id: new ObjectId(userId) });
@@ -896,8 +923,14 @@ async function recalculateUserLiableAndPnL(userId) {
   if (activeOrders.length === 0) {
     await usersCollection.updateOne(
       { _id: new ObjectId(userId) },
-      { $set: { liable: 0, runnerPnL: {}, wallet_balance: user.wallet_balance } }
+      { $set: { liable: 0, runnerPnL: {} } }
     );
+    const fresh = await usersCollection.findOne({ _id: new ObjectId(userId) });
+    global.io.to("user_" + userId).emit("userUpdated", {
+      wallet_balance: fresh.wallet_balance,
+      liable: fresh.liable,
+      runnerPnL: fresh.runnerPnL
+    });
     return;
   }
 
@@ -928,7 +961,6 @@ async function recalculateUserLiableAndPnL(userId) {
 
     let marketLiability = 0;
 
-    // 🩵 FIXED SINGLE-RUNNER LOGIC
     if (selections.length === 1) {
       for (const b of marketOrders) {
         if (b.side === "B") {
@@ -950,14 +982,11 @@ async function recalculateUserLiableAndPnL(userId) {
     }
   }
 
-  const oldLiability = user.liable || 0;
-  const newWallet = (user.initial_wallet_balance || user.wallet_balance + oldLiability) - totalLiability;
-
+  // UPDATE only liable and runnerPnL (do not change wallet here)
   await usersCollection.updateOne(
     { _id: new ObjectId(userId) },
     {
       $set: {
-        wallet_balance: newWallet < 0 ? 0 : newWallet,
         liable: totalLiability,
         runnerPnL: combinedRunnerPnL
       }
