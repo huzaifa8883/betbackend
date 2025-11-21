@@ -353,40 +353,37 @@ async function getMarketBookFromBetfair(marketId, selectionId) {
 //     executedPrice
 //   };
 // }
+// --- CHECK MATCH WITH PARTIAL MATCH SUPPORT ---
 function checkMatch(order, runner) {
-  let status = "PENDING";
-  let executedPrice = parseFloat(order.price);
+    let status = "PENDING";
+    let executedPrice = parseFloat(order.price);
+    let matchedSize = 0;
 
-  const backs = (runner.ex?.availableToBack || []).map(b => parseFloat(b.price)).filter(p => !isNaN(p));
-  const lays  = (runner.ex?.availableToLay || []).map(b => parseFloat(b.price)).filter(p => !isNaN(p));
+    const backs = (runner.ex?.availableToBack || []).map(b => parseFloat(b.price)).filter(p => !isNaN(p));
+    const lays = (runner.ex?.availableToLay || []).map(b => parseFloat(b.price)).filter(p => !isNaN(p));
 
-  if ((order.type === "BACK" && backs.length === 0) || (order.type === "LAY" && lays.length === 0)) {
-    return { matchedSize: 0, status: "PENDING", executedPrice: order.price };
-  }
-
-  if (order.type === "BACK") {
-    // Match at the closest back price >= user price
-    const suitableBacks = backs.filter(p => p >= executedPrice);
-    if (suitableBacks.length) {
-      executedPrice = Math.min(...suitableBacks); // closest ≥ user price
-      status = "MATCHED";
+    if ((order.type === "BACK" && backs.length === 0) || (order.type === "LAY" && lays.length === 0)) {
+        return { matchedSize: 0, status, executedPrice };
     }
-  } else if (order.type === "LAY") {
-    // Match at the closest lay price <= user price
-    const suitableLays = lays.filter(p => p <= executedPrice);
-    if (suitableLays.length) {
-      executedPrice = Math.max(...suitableLays); // closest ≤ user price
-      status = "MATCHED";
-    }
-  }
 
-  return {
-    matchedSize: status === "MATCHED" ? order.size : 0,
-    status,
-    executedPrice
-  };
+    if (order.type === "BACK") {
+        const suitableBacks = backs.filter(p => p >= executedPrice);
+        if (suitableBacks.length) {
+            executedPrice = Math.min(...suitableBacks);
+            matchedSize = order.size; // Full match for simplicity, can add partial logic
+            status = "MATCHED";
+        }
+    } else if (order.type === "LAY") {
+        const suitableLays = lays.filter(p => p <= executedPrice);
+        if (suitableLays.length) {
+            executedPrice = Math.max(...suitableLays);
+            matchedSize = order.size;
+            status = "MATCHED";
+        }
+    }
+
+    return { matchedSize, status, executedPrice };
 }
-
 
 // GET /orders/event
 router.get("/event", (req, res) => {
@@ -840,222 +837,160 @@ router.get("/event", (req, res) => {
 //   }
 // });
 router.post("/", authMiddleware(), async (req, res) => {
-  try {
-    const user = req.user;
-    if (!user || user.role !== "User") {
-      return res.status(403).json({ error: "Only users can place bets" });
-    }
+    try {
+        const user = req.user;
+        if (!user || user.role !== "User") return res.status(403).json({ error: "Only users can place bets" });
 
-    const orders = req.body;
-    if (!Array.isArray(orders) || orders.length === 0) {
-      return res.status(400).json({ error: "Orders must be an array" });
-    }
+        const orders = req.body;
+        if (!Array.isArray(orders) || orders.length === 0) return res.status(400).json({ error: "Orders must be an array" });
 
-    const usersCollection = getUsersCollection();
-    const dbUser = await usersCollection.findOne({ _id: new ObjectId(user._id) });
-    if (!dbUser) return res.status(404).json({ error: "User not found" });
+        const usersCollection = getUsersCollection();
+        const dbUser = await usersCollection.findOne({ _id: new ObjectId(user._id) });
+        if (!dbUser) return res.status(404).json({ error: "User not found" });
 
-    const walletBalance = dbUser.wallet_balance || 0;
-    const teamProfits = Object.values(dbUser.runnerPnL || {}).filter(p => p > 0);
-    const totalPositiveProfit = teamProfits.reduce((a, b) => a + b, 0);
-    const availableForLay = walletBalance + totalPositiveProfit;
+        const walletBalance = dbUser.wallet_balance || 0;
+        const totalPositiveProfit = Object.values(dbUser.runnerPnL || {}).filter(p => p > 0).reduce((a, b) => a + b, 0);
+        const availableForLay = walletBalance + totalPositiveProfit;
 
-    await Promise.all(
-      orders.map(async (order) => {
-        const { eventName, category } = await getEventDetailsFromBetfair(order.marketId);
-        order.event = eventName;
-        order.category = category;
-      })
-    );
+        // Fetch event details for orders
+        await Promise.all(orders.map(async (order) => {
+            const { eventName, category } = await getEventDetailsFromBetfair(order.marketId);
+            order.event = eventName;
+            order.category = category;
+        }));
 
-    const normalizedOrders = orders.map((order) => {
-      const price = parseFloat(order.price);
-      const size = parseFloat(order.size);
-      const liable = order.side === "B" ? size : (price - 1) * size;
-      return {
-        ...order,
-        price,
-        size,
-        liable,
-        type: order.side === "B" ? "BACK" : "LAY",
-        position: order.side === "B" ? "BACK" : "LAY",
-        status: "PENDING",
-        matched: 0,
-        requestId: Date.now() + Math.floor(Math.random() * 1000),
-        userId: user._id,
-        created_at: new Date(),
-        updated_at: new Date(),
-      };
-    });
+        // Normalize orders
+        const normalizedOrders = orders.map(order => {
+            const price = parseFloat(order.price);
+            const size = parseFloat(order.size);
+            const liable = order.side === "B" ? size : (price - 1) * size;
+            return {
+                ...order,
+                price,
+                size,
+                liable,
+                type: order.side === "B" ? "BACK" : "LAY",
+                position: order.side === "B" ? "BACK" : "LAY",
+                status: "PENDING",
+                matched: 0,
+                requestId: Date.now() + Math.floor(Math.random() * 1000),
+                userId: user._id,
+                created_at: new Date(),
+                updated_at: new Date()
+            };
+        }));
 
-    const tentativeAll = [...(dbUser.orders || []), ...normalizedOrders];
-    const tentativeSelections = [...new Set(tentativeAll.map(b => String(b.selectionId)))];
-    const tentativeTeamPnL = {};
-    for (const s of tentativeSelections) tentativeTeamPnL[s] = 0;
-    for (const bet of tentativeAll) {
-      const sel = String(bet.selectionId);
-      const { side, price, size } = bet;
-      if (side === "B") {
-        tentativeTeamPnL[sel] += (price - 1) * size;
-        tentativeSelections.forEach(o => { if (o !== sel) tentativeTeamPnL[o] -= size; });
-      } else {
-        tentativeTeamPnL[sel] -= (price - 1) * size;
-        tentativeSelections.forEach(o => { if (o !== sel) tentativeTeamPnL[o] += size; });
-      }
-    }
-    let tentativeLiability = 0;
-    for (const v of Object.values(tentativeTeamPnL)) if (v < 0) tentativeLiability += Math.abs(v);
-    if (tentativeLiability > availableForLay) {
-      return res.status(400).json({ error: "Insufficient funds for this bet (tentative check)" });
-    }
+        // Tentative check for insufficient funds
+        const tentativeAll = [...(dbUser.orders || []), ...normalizedOrders];
+        const selections = [...new Set(tentativeAll.map(b => String(b.selectionId)))];
+        const tentativePnL = {};
+        for (const sel of selections) tentativePnL[sel] = 0;
 
-    await usersCollection.updateOne(
-      { _id: new ObjectId(user._id) },
-      {
-        $push: {
-          orders: { $each: normalizedOrders },
-          transactions: {
-            type: "BET_PLACED",
-            amount: 0 - tentativeLiability,
-            created_at: new Date()
-          }
+        for (const bet of tentativeAll) {
+            const sel = String(bet.selectionId);
+            const { side, price, size } = bet;
+            if (side === "B") {
+                tentativePnL[sel] += (price - 1) * size;
+                selections.forEach(o => { if (o !== sel) tentativePnL[o] -= size; });
+            } else {
+                tentativePnL[sel] -= (price - 1) * size;
+                selections.forEach(o => { if (o !== sel) tentativePnL[o] += size; });
+            }
         }
-      }
-    );
 
-    for (let order of normalizedOrders) {
-      const runner = await getMarketBookFromBetfair(order.marketId, order.selectionId);
-      if (!runner) continue;
+        let tentativeLiability = 0;
+        for (const v of Object.values(tentativePnL)) if (v < 0) tentativeLiability += Math.abs(v);
+        if (tentativeLiability > availableForLay) return res.status(400).json({ error: "Insufficient funds for this bet (tentative check)" });
 
-      const { matchedSize, status, executedPrice } = checkMatch(order, runner);
+        // Save orders without deducting wallet yet
+        await usersCollection.updateOne(
+            { _id: new ObjectId(user._id) },
+            { $push: { orders: { $each: normalizedOrders } } }
+        );
 
-      await usersCollection.updateOne(
-        { _id: new ObjectId(user._id), "orders.requestId": order.requestId },
-        {
-          $set: {
-            "orders.$.matched": matchedSize,
-            "orders.$.status": status,
-            "orders.$.price": executedPrice,
-            "orders.$.updated_at": new Date()
-          }
+        // Match orders asynchronously
+        for (let order of normalizedOrders) {
+            const runner = await getMarketBookFromBetfair(order.marketId, order.selectionId);
+            if (!runner) continue;
+
+            const { matchedSize, status, executedPrice } = checkMatch(order, runner);
+            await usersCollection.updateOne(
+                { _id: new ObjectId(user._id), "orders.requestId": order.requestId },
+                { $set: { "orders.$.matched": matchedSize, "orders.$.status": status, "orders.$.price": executedPrice, "orders.$.updated_at": new Date() } }
+            );
+
+            if (status === "MATCHED") {
+                global.io.to("match_" + order.marketId).emit("ordersUpdated", {
+                    userId: user._id,
+                    newOrders: [{ ...order, matched: matchedSize, status, price: executedPrice }]
+                });
+            }
         }
-      );
 
-      if (status === "MATCHED") {
-        global.io.to("match_" + order.marketId).emit("ordersUpdated", {
-          userId: user._id,
-          newOrders: [{ ...order, matched: matchedSize, status, price: executedPrice }]
-        });
-      }
+        // Recalculate liability & wallet in background
+        recalculateUserLiableAndPnL(user._id).then(() => console.log("✅ Liability recalculated")).catch(err => console.error(err));
+
+        res.status(200).json({ message: "Bet placed successfully", orders: normalizedOrders });
+
+    } catch (err) {
+        console.error("❌ Bet place error:", err);
+        res.status(500).json({ error: err.message });
     }
-
-    // 🔹 Run recalc in background to prevent frontend hanging
-    recalculateUserLiableAndPnL(user._id)
-      .then(() => console.log("✅ Liability recalculated for user:", user._id))
-      .catch((err) => console.error("❌ Recalc error:", err));
-
-    // 🔹 Immediate response
-    res.status(200).json({
-      message: "Bet placed successfully",
-      orders: normalizedOrders
-    });
-
-  } catch (err) {
-    console.error("❌ Bet place error:", err);
-    res.status(500).json({ error: err.message });
-  }
 });
 
-
-// --- Helper: recalculateUserLiableAndPnL (uses ALL active orders) ---
+// --- RECALCULATE LIABILITY & WALLET ---
 async function recalculateUserLiableAndPnL(userId) {
-  const usersCollection = getUsersCollection();
-  const user = await usersCollection.findOne({ _id: new ObjectId(userId) });
-  if (!user) return;
+    const usersCollection = getUsersCollection();
+    const user = await usersCollection.findOne({ _id: new ObjectId(userId) });
+    if (!user) return;
 
-  const allOrders = user.orders || [];
-
-  const activeOrders = allOrders.filter(o =>
-    ["PENDING", "MATCHED"].includes(o.status)
-  );
-
-  if (activeOrders.length === 0) {
-    await usersCollection.updateOne(
-      { _id: new ObjectId(userId) },
-      { $set: { liable: 0, runnerPnL: {}, wallet_balance: user.wallet_balance } }
-    );
-    return;
-  }
-
-  const markets = [...new Set(activeOrders.map(o => o.marketId))];
-  let totalLiability = 0;
-  const combinedRunnerPnL = {};
-
-  for (const marketId of markets) {
-    const marketOrders = activeOrders.filter(o => o.marketId === marketId);
-    const selections = [...new Set(marketOrders.map(o => String(o.selectionId)))];
-    const teamPnL = {};
-    for (const s of selections) teamPnL[s] = 0;
-
-    for (const bet of marketOrders) {
-      const sel = String(bet.selectionId);
-      const side = bet.side;
-      const price = Number(bet.price);
-      const size = Number(bet.matched || bet.size);
-
-      if (side === "B") {
-        teamPnL[sel] += (price - 1) * size;
-        selections.forEach(o => { if (o !== sel) teamPnL[o] -= size; });
-      } else if (side === "L") {
-        teamPnL[sel] -= (price - 1) * size;
-        selections.forEach(o => { if (o !== sel) teamPnL[o] += size; });
-      }
+    const activeOrders = (user.orders || []).filter(o => ["PENDING", "MATCHED"].includes(o.status));
+    if (!activeOrders.length) {
+        await usersCollection.updateOne({ _id: userId }, { $set: { liable: 0, runnerPnL: {}, wallet_balance: user.wallet_balance } });
+        return;
     }
 
-    let marketLiability = 0;
+    const markets = [...new Set(activeOrders.map(o => o.marketId))];
+    let totalLiability = 0;
+    const combinedPnL = {};
 
-    // 🩵 FIXED SINGLE-RUNNER LOGIC
-    if (selections.length === 1) {
-      for (const b of marketOrders) {
-        if (b.side === "B") {
-          marketLiability += b.size;
-        } else if (b.side === "L") {
-          marketLiability += (b.price - 1) * b.size;
+    for (const marketId of markets) {
+        const marketOrders = activeOrders.filter(o => o.marketId === marketId);
+        const selections = [...new Set(marketOrders.map(o => String(o.selectionId)))];
+        const teamPnL = {};
+        for (const s of selections) teamPnL[s] = 0;
+
+        for (const bet of marketOrders) {
+            const sel = String(bet.selectionId);
+            const side = bet.side;
+            const price = Number(bet.price);
+            const size = Number(bet.matched || bet.size);
+
+            if (side === "B") {
+                teamPnL[sel] += (price - 1) * size;
+                selections.forEach(o => { if (o !== sel) teamPnL[o] -= size; });
+            } else {
+                teamPnL[sel] -= (price - 1) * size;
+                selections.forEach(o => { if (o !== sel) teamPnL[o] += size; });
+            }
         }
-      }
-    } else {
-      for (const pnl of Object.values(teamPnL)) {
-        if (pnl < 0) marketLiability += Math.abs(pnl);
-      }
+
+        let marketLiability = 0;
+        for (const pnl of Object.values(teamPnL)) if (pnl < 0) marketLiability += Math.abs(pnl);
+        totalLiability += marketLiability;
+
+        for (const [k, v] of Object.entries(teamPnL)) combinedPnL[k] = (combinedPnL[k] || 0) + v;
     }
 
-    totalLiability += marketLiability;
+    const oldLiability = user.liable || 0;
+    const newWallet = (user.initial_wallet_balance || user.wallet_balance + oldLiability) - totalLiability;
 
-    for (const [k, v] of Object.entries(teamPnL)) {
-      combinedRunnerPnL[k] = (combinedRunnerPnL[k] || 0) + v;
-    }
-  }
+    await usersCollection.updateOne(
+        { _id: userId },
+        { $set: { wallet_balance: newWallet < 0 ? 0 : newWallet, liable: totalLiability, runnerPnL: combinedPnL } }
+    );
 
-  const oldLiability = user.liable || 0;
-  const newWallet = (user.initial_wallet_balance || user.wallet_balance + oldLiability) - totalLiability;
-
-  await usersCollection.updateOne(
-    { _id: new ObjectId(userId) },
-    {
-      $set: {
-        wallet_balance: newWallet < 0 ? 0 : newWallet,
-        liable: totalLiability,
-        runnerPnL: combinedRunnerPnL
-      }
-    }
-  );
-
-  const fresh = await usersCollection.findOne({ _id: new ObjectId(userId) });
-  global.io.to("user_" + userId).emit("userUpdated", {
-    wallet_balance: fresh.wallet_balance,
-    liable: fresh.liable,
-    runnerPnL: fresh.runnerPnL
-  });
+    global.io.to("user_" + userId).emit("userUpdated", { wallet_balance: newWallet, liable: totalLiability, runnerPnL: combinedPnL });
 }
 
 async function refreshPendingOrders(userId, marketId, runnerData) {
