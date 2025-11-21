@@ -357,32 +357,79 @@ function checkMatch(order, runner) {
   let status = "PENDING";
   let executedPrice = parseFloat(order.price);
 
-  const backs = (runner.ex?.availableToBack || []).map(b => parseFloat(b.price)).filter(p => !isNaN(p));
-  const lays  = (runner.ex?.availableToLay || []).map(b => parseFloat(b.price)).filter(p => !isNaN(p));
+  const rawBacks = runner.ex?.availableToBack || [];
+  const rawLays = runner.ex?.availableToLay || [];
+  const rawLays  = runner.ex?.availableToLay  || [];
 
-  if ((order.type === "BACK" && backs.length === 0) || (order.type === "LAY" && lays.length === 0)) {
-    return { matchedSize: 0, status: "PENDING", executedPrice: order.price };
+  const backs = rawBacks.map(b => parseFloat(b.price)).filter(p => !isNaN(p));
+  const lays  = rawLays.map(l => parseFloat(l.price)).filter(p => !isNaN(p));
+
+  // No data → can't match anything
+  if (backs.length === 0 && lays.length === 0) {
+    return {
+      matchedSize: 0,
+      status: "PENDING",
+      executedPrice: order.price
+    };
   }
 
   if (order.type === "BACK") {
-    const matchable = backs.find(p => p >= executedPrice);
-    if (matchable !== undefined) {
-    // Match at the closest back price >= user price
-    const suitableBacks = backs.filter(p => p >= executedPrice);
-    if (suitableBacks.length) {
-      executedPrice = Math.min(...suitableBacks); // closest ≥ user price
-      status = "MATCHED";
-      executedPrice = matchable;
+
+    const minBack = Math.min(...backs);
+    const maxBack = Math.max(...backs);
+    const bestBack = Math.min(...backs);  // lowest available back price
+    const worstBack = Math.max(...backs); // highest available back price
+
+    // Rule: user odd < min available → PENDING
+    if (executedPrice < minBack) {
+    // If user wants BETTER odds than market → pending
+    if (executedPrice < bestBack) {
+      status = "PENDING";
     }
-  } else if (order.type === "LAY") {
-    const matchable = lays.find(p => p <= executedPrice);
-    if (matchable !== undefined) {
-    // Match at the closest lay price <= user price
-    const suitableLays = lays.filter(p => p <= executedPrice);
-    if (suitableLays.length) {
-      executedPrice = Math.max(...suitableLays); // closest ≤ user price
+    // Rule: user odd > max available → MATCHED at maxBack
+    else if (executedPrice > maxBack) {
+    // If user accepts WORSE odds → match at worst available
+    else if (executedPrice > worstBack) {
       status = "MATCHED";
-      executedPrice = matchable;
+      executedPrice = maxBack;
+      executedPrice = worstBack;
+    }
+    // Otherwise in between → MATCHED at closest available >= userOdd
+    // Otherwise match at closest available >= user price
+    else {
+      const eligible = backs.filter(p => p >= executedPrice);
+      executedPrice = Math.min(...eligible);
+      status = "MATCHED";
+    }
+  }
+
+  else if (order.type === "LAY") {
+
+    const minLay = Math.min(...lays);
+    const maxLay = Math.max(...lays);
+    const bestLay = Math.min(...lays);  // lowest available lay price
+    const worstLay = Math.max(...lays); // highest available lay price
+
+    // Rule: user odd > max available → PENDING
+    if (executedPrice > maxLay) {
+    // If user wants BETTER odds than market → pending
+    if (executedPrice > worstLay) {
+      status = "PENDING";
+    }
+    // Rule: user odd < min available → MATCHED at minLay
+    else if (executedPrice < minLay) {
+    // If user accepts WORSE odds → match at best available
+    else if (executedPrice < bestLay) {
+      status = "MATCHED";
+      executedPrice = minLay;
+      executedPrice = bestLay;
+    }
+    // Otherwise in between → MATCHED at closest available <= userOdd
+    // Otherwise match at closest available <= user price
+    else {
+      const eligible = lays.filter(p => p <= executedPrice);
+      executedPrice = Math.max(...eligible);
+      status = "MATCHED";
     }
   }
 
@@ -392,6 +439,7 @@ function checkMatch(order, runner) {
     executedPrice
   };
 }
+
 
 
 // GET /orders/event
@@ -973,6 +1021,7 @@ router.post("/", authMiddleware(), async (req, res) => {
 });
 
 
+
 // --- Helper: recalculateUserLiableAndPnL (uses ALL active orders) ---
 async function recalculateUserLiableAndPnL(userId) {
   const usersCollection = getUsersCollection();
@@ -1067,21 +1116,15 @@ async function recalculateUserLiableAndPnL(userId) {
 async function refreshPendingOrders(userId, marketId, runnerData) {
   try {
     const usersCollection = getUsersCollection();
+    const user = await usersCollection.findOne({ _id: new ObjectId(userId) });
 
-    // Only fetch pending orders, not full user
-    const user = await usersCollection.findOne(
-      { _id: new ObjectId(userId) },
-      { projection: { orders: 1 } }
-    );
-    if (!user || !user.orders) return;
+    if (!user) return;
 
-    const pendingOrders = user.orders.filter(
+    const pendingOrders = (user.orders || []).filter(
       o => o.status === "PENDING" && o.marketId === marketId
     );
-    if (pendingOrders.length === 0) return;
 
-    let hasUpdates = false;
-    const updates = [];
+    if (pendingOrders.length === 0) return;
 
     for (const order of pendingOrders) {
       const runner = runnerData.find(r => r.selectionId === order.selectionId);
@@ -1089,44 +1132,32 @@ async function refreshPendingOrders(userId, marketId, runnerData) {
 
       const { matchedSize, status, executedPrice } = checkMatch(order, runner);
 
-      if (status !== order.status) {
-        hasUpdates = true;
+      order.matched = matchedSize;
+      order.status = status;
+      order.price = executedPrice;
 
-        order.matched = matchedSize;
-        order.status = status;
-        order.price = executedPrice;
-        order.updated_at = new Date();
-
-        updates.push({ ...order });
-      }
-    }
-
-    if (hasUpdates) {
-      // Bulk update only modified orders
-      await usersCollection.updateOne(
-        { _id: new ObjectId(userId) },
-        {
-          $set: {
-            "orders.$[elem]": updates[0] // first matched order
-          }
-        },
-        {
-          arrayFilters: [
-            { "elem._id": updates[0]._id } // match order by id
-          ]
-        }
-      );
-
-      // If multiple orders updated, send all in one emit
       global.io.to("match_" + marketId).emit("ordersUpdated", {
         userId,
-        newOrders: updates
+        newOrders: [{
+          ...order,
+          matched: matchedSize,
+          status,
+          price: executedPrice
+        }]
       });
     }
+
+    await usersCollection.updateOne(
+      { _id: new ObjectId(userId) },
+      { $set: { orders: user.orders } }
+    );
+
   } catch (err) {
     console.error("refreshPendingOrders error:", err);
   }
 }
+
+
 
 /* ------------------------------ SETTLEMENT ------------------------------ */
 async function settleEventBets(eventId, winningSelectionId) {
@@ -1222,53 +1253,51 @@ async function settleEventBets(eventId, winningSelectionId) {
   console.log("🎯 All matched bets settled for event:", eventId);
 }
 
-let pollingStarted = false;
+
 
 function startMarketPolling() {
-  if (pollingStarted) return;
-  pollingStarted = true;
-
-  const POLL_INTERVAL = 5000;
+  const POLL_INTERVAL = 5000; // 5 seconds
 
   setInterval(async () => {
     try {
       const activeMarketsCollection = getActiveMarketsCollection();
       const active = await activeMarketsCollection.find({ hasPending: true }).toArray();
-      if (!active.length) return;
+      if (active.length === 0) return;
 
       for (const { marketId } of active) {
-
         const marketBook = await getMarketBookFromBetfair(marketId);
         if (!marketBook?.runners) continue;
 
         const usersCollection = getUsersCollection();
+        const usersWithPending = await usersCollection
+          .aggregate([
+            { $match: { "orders.marketId": marketId, "orders.status": { $in: ["PENDING", "PARTIALLY_MATCHED"] } } },
+            { $project: { _id: 1 } }
+          ])
+          .toArray();
 
-        const usersWithPending = await usersCollection.find(
-          { "orders.marketId": marketId, "orders.status": "PENDING" },
-          { projection: { _id: 1 } }
-        ).toArray();
+        for (const { _id } of usersWithPending) {
+          await refreshPendingOrders(_id.toString(), marketId, marketBook.runners);
+        }
 
-        if (!usersWithPending.length) {
+        // Cleanup: if no pending, mark inactive
+        const stillPending = await usersCollection.countDocuments({
+          "orders.marketId": marketId,
+          "orders.status": { $in: ["PENDING", "PARTIALLY_MATCHED"] }
+        });
+
+        if (stillPending === 0) {
           await activeMarketsCollection.updateOne(
             { marketId },
             { $set: { hasPending: false } }
           );
-          continue;
         }
-
-        await Promise.all(
-          usersWithPending.map(u =>
-            refreshPendingOrders(u._id.toString(), marketId, marketBook.runners)
-          )
-        );
       }
     } catch (err) {
       console.error("Polling error:", err);
     }
   }, POLL_INTERVAL);
 }
-
-startMarketPolling();
 
 // track order
 // PATCH /orders/request/:requestId
@@ -1505,5 +1534,5 @@ router.get("/with-category", authMiddleware(), async (req, res) => {
 module.exports = {
   router,
   settleEventBets,
-
+  startMarketPolling
 };
