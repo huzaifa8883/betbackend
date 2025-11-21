@@ -1,4 +1,4 @@
-// orders.js (backend route)
+
 const express = require("express");
 const axios = require("axios");
 const router = express.Router();
@@ -22,7 +22,7 @@ const authMiddleware = (requiredRole = null) => {
 
     try {
       const decoded = jwt.verify(token, config.api.jwtSecret);
-
+      
       // Debug log
       console.log("JWT Decoded payload:", decoded);
 
@@ -85,7 +85,7 @@ const APP_KEY = process.env.BETFAIR_APP_KEY
 // // 🔐 Get session token from Betfair login API
 
 
-
+  
 
 // 🚀 Fetch live
 //  markets (auto-login)
@@ -214,7 +214,7 @@ async function getEventDetailsFromBetfair(marketId) {
     return { eventName: "Unknown Event", category: "Other" };
   }
 }
-
+  
 
 
 
@@ -358,7 +358,6 @@ function checkMatch(order, runner) {
   let executedPrice = parseFloat(order.price);
 
   const rawBacks = runner.ex?.availableToBack || [];
-  const rawLays = runner.ex?.availableToLay || [];
   const rawLays  = runner.ex?.availableToLay  || [];
 
   const backs = rawBacks.map(b => parseFloat(b.price)).filter(p => !isNaN(p));
@@ -375,26 +374,18 @@ function checkMatch(order, runner) {
 
   if (order.type === "BACK") {
 
-    const minBack = Math.min(...backs);
-    const maxBack = Math.max(...backs);
     const bestBack = Math.min(...backs);  // lowest available back price
     const worstBack = Math.max(...backs); // highest available back price
 
-    // Rule: user odd < min available → PENDING
-    if (executedPrice < minBack) {
     // If user wants BETTER odds than market → pending
     if (executedPrice < bestBack) {
       status = "PENDING";
     }
-    // Rule: user odd > max available → MATCHED at maxBack
-    else if (executedPrice > maxBack) {
     // If user accepts WORSE odds → match at worst available
     else if (executedPrice > worstBack) {
       status = "MATCHED";
-      executedPrice = maxBack;
       executedPrice = worstBack;
     }
-    // Otherwise in between → MATCHED at closest available >= userOdd
     // Otherwise match at closest available >= user price
     else {
       const eligible = backs.filter(p => p >= executedPrice);
@@ -405,26 +396,18 @@ function checkMatch(order, runner) {
 
   else if (order.type === "LAY") {
 
-    const minLay = Math.min(...lays);
-    const maxLay = Math.max(...lays);
     const bestLay = Math.min(...lays);  // lowest available lay price
     const worstLay = Math.max(...lays); // highest available lay price
 
-    // Rule: user odd > max available → PENDING
-    if (executedPrice > maxLay) {
     // If user wants BETTER odds than market → pending
     if (executedPrice > worstLay) {
       status = "PENDING";
     }
-    // Rule: user odd < min available → MATCHED at minLay
-    else if (executedPrice < minLay) {
     // If user accepts WORSE odds → match at best available
     else if (executedPrice < bestLay) {
       status = "MATCHED";
-      executedPrice = minLay;
       executedPrice = bestLay;
     }
-    // Otherwise in between → MATCHED at closest available <= userOdd
     // Otherwise match at closest available <= user price
     else {
       const eligible = lays.filter(p => p <= executedPrice);
