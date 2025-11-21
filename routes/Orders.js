@@ -1534,5 +1534,4 @@ router.get("/with-category", authMiddleware(), async (req, res) => {
 module.exports = {
   router,
   settleEventBets,
-  startMarketPolling
 };
