@@ -1008,11 +1008,13 @@ async function recalculateUserLiableAndPnL(userId) {
   const allOrders = user.orders || [];
   const matchedOrders = allOrders.filter(o => o.status === "MATCHED");
 
+  // Original wallet: before any matched bets
+  const originalWallet = user.original_wallet ?? ((user.wallet_balance || 0) + (user.liable || 0));
+
   if (matchedOrders.length === 0) {
-    const baseWallet = (user.wallet_balance || 0) + (user.liable || 0);
     await usersCollection.updateOne(
       { _id: new ObjectId(userId) },
-      { $set: { wallet_balance: baseWallet, liable: 0, runnerPnL: {} } }
+      { $set: { wallet_balance: originalWallet, liable: 0, runnerPnL: {} } }
     );
     return;
   }
@@ -1036,7 +1038,7 @@ async function recalculateUserLiableAndPnL(userId) {
       if (side === "B") {
         teamPnL[sel] += (price - 1) * size;
         selections.forEach(o => { if (o !== sel) teamPnL[o] -= size; });
-      } else if (side === "L") {
+      } else {
         teamPnL[sel] -= (price - 1) * size;
         selections.forEach(o => { if (o !== sel) teamPnL[o] += size; });
       }
@@ -1056,8 +1058,7 @@ async function recalculateUserLiableAndPnL(userId) {
     for (const [k, v] of Object.entries(teamPnL)) combinedRunnerPnL[k] = (combinedRunnerPnL[k] || 0) + v;
   }
 
-  const baseWallet = (user.wallet_balance || 0) + (user.liable || 0);
-  const newWallet = Math.max(0, baseWallet - totalLiability);
+  const newWallet = Math.max(0, originalWallet - totalLiability);
 
   await usersCollection.updateOne(
     { _id: new ObjectId(userId) },
