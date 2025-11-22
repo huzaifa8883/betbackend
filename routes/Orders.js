@@ -263,39 +263,121 @@ async function getMarketBookFromBetfair(marketId, selectionId) {
 /* ---------------- Matching Engine ---------------- */
 function checkMatch(order, runner) {
   let matchedSize = 0;
-  let status = "UNMATCHED";
+  let status = "PENDING";
   let executedPrice = order.price;
 
   const backs = runner.ex.availableToBack || [];
   const lays = runner.ex.availableToLay || [];
 
-  if (order.type === "BACK" && backs.length > 0) {
-    // Sabse bara back odd (highest)
-    const highestBack = Math.max(...backs.map(b => b.price));
+  // BACK BET LOGIC
+  if (order.type === "BACK" || order.side === "B") {
+    if (backs.length > 0) {
+      const backPrices = backs.map(b => b.price);
+      const highestBack = Math.max(...backPrices);
+      const lowestBack = Math.min(...backPrices);
+      const selectedPrice = Number(order.price);
 
-    if (highestBack >= order.price) {
-      executedPrice = highestBack;
-      matchedSize = order.size; // abhi full match (partial ka size check add kar sakte)
-      status = "MATCHED";
+      // Rule: Match if selected odd <= any available odd OR < smallest available odd
+      // Always match at the highest available back odd (unless selected > highest)
+      if (selectedPrice <= highestBack || selectedPrice < lowestBack) {
+        // Match at highest available back odd
+        executedPrice = highestBack;
+        matchedSize = order.size;
+        status = "MATCHED";
+      } else if (selectedPrice > highestBack) {
+        // Pending if selected odd > largest available odd
+        status = "PENDING";
+      }
     } else {
-      status = "UNMATCHED";
+      // No back odds available, keep as pending
+      status = "PENDING";
     }
   }
 
-  else if (order.type === "LAY" && lays.length > 0) {
-    // Sabse chhota lay odd (lowest)
-    const lowestLay = Math.min(...lays.map(l => l.price));
+  // LAY BET LOGIC (opposite of back)
+  else if (order.type === "LAY" || order.side === "L") {
+    if (lays.length > 0) {
+      const layPrices = lays.map(l => l.price);
+      const lowestLay = Math.min(...layPrices);
+      const highestLay = Math.max(...layPrices);
+      const selectedPrice = Number(order.price);
 
-    if (lowestLay <= order.price) {
-      executedPrice = lowestLay;
-      matchedSize = order.size;
-      status = "MATCHED";
+      // Rule: Match if selected odd >= lowest available lay odd
+      // Always match at the lowest available lay odd
+      if (selectedPrice >= lowestLay) {
+        // Match at lowest available lay odd
+        executedPrice = lowestLay;
+        matchedSize = order.size;
+        status = "MATCHED";
+      } else if (selectedPrice < lowestLay) {
+        // Pending if selected odd < lowest available odd
+        status = "PENDING";
+      }
     } else {
-      status = "UNMATCHED";
+      // No lay odds available, keep as pending
+      status = "PENDING";
     }
   }
 
   return { matchedSize, status, executedPrice };
+}
+
+/* ---------------- Auto-match Pending Bets ---------------- */
+async function autoMatchPendingBets(marketId, selectionId) {
+  try {
+    const usersCollection = getUsersCollection();
+    const runner = await getMarketBookFromBetfair(marketId, selectionId);
+    if (!runner) return;
+
+    // Find all users with pending bets for this market/selection
+    const users = await usersCollection.find({
+      "orders.marketId": marketId,
+      "orders.selectionId": selectionId,
+      "orders.status": "PENDING"
+    }).toArray();
+
+    for (const user of users) {
+      const pendingBets = (user.orders || []).filter(
+        o => o.marketId === marketId && 
+             o.selectionId === selectionId && 
+             o.status === "PENDING"
+      );
+
+      for (const bet of pendingBets) {
+        const { matchedSize, status, executedPrice } = checkMatch(bet, runner);
+
+        if (status === "MATCHED") {
+          // Update bet to matched
+          await usersCollection.updateOne(
+            { _id: user._id, "orders.requestId": bet.requestId },
+            {
+              $set: {
+                "orders.$.matched": matchedSize,
+                "orders.$.status": "MATCHED",
+                "orders.$.price": executedPrice,
+                "orders.$.updated_at": new Date()
+              }
+            }
+          );
+
+          // Recalculate liability after matching
+          await recalculateUserLiableAndPnL(user._id);
+
+          // Notify via socket
+          if (global.io) {
+            global.io.to("match_" + marketId).emit("ordersUpdated", {
+              userId: user._id,
+              newOrders: [{ ...bet, matched: matchedSize, status: "MATCHED", price: executedPrice }]
+            });
+          }
+
+          console.log(`✅ Auto-matched pending bet ${bet.requestId} for user ${user._id}`);
+        }
+      }
+    }
+  } catch (err) {
+    console.error("❌ Auto-match pending bets error:", err);
+  }
 }
 
 
@@ -867,6 +949,14 @@ router.post("/", authMiddleware(), async (req, res) => {
       .then(() => console.log("✅ Liability recalculated for user:", user._id))
       .catch((err) => console.error("❌ Recalc error:", err));
 
+    // 🔹 Check and auto-match any pending bets for the same market/selections
+    const uniqueSelections = [...new Set(normalizedOrders.map(o => ({ marketId: o.marketId, selectionId: o.selectionId })))];
+    for (const { marketId, selectionId } of uniqueSelections) {
+      autoMatchPendingBets(marketId, selectionId).catch(err => 
+        console.error("❌ Auto-match error:", err)
+      );
+    }
+
     // 🔹 Immediate response
     res.status(200).json({
       message: "Bet placed successfully",
@@ -890,7 +980,7 @@ async function recalculateUserLiableAndPnL(userId) {
   const allOrders = user.orders || [];
 
   const activeOrders = allOrders.filter(o =>
-    ["PENDING", "UNMATCHED", "MATCHED"].includes(o.status)
+    ["PENDING", "MATCHED"].includes(o.status)
   );
 
   if (activeOrders.length === 0) {
@@ -914,8 +1004,10 @@ async function recalculateUserLiableAndPnL(userId) {
     for (const bet of marketOrders) {
       const sel = String(bet.selectionId);
       const side = bet.side;
+      // For MATCHED bets, price is already the executed price; for PENDING, it's the original selected price
       const price = Number(bet.price);
-      const size = Number(bet.matched || bet.size);
+      // For MATCHED bets, use matched size (should equal full size); for PENDING, use original size
+      const size = Number(bet.status === "MATCHED" ? (bet.matched || bet.size) : bet.size);
 
       if (side === "B") {
         teamPnL[sel] += (price - 1) * size;
@@ -931,10 +1023,14 @@ async function recalculateUserLiableAndPnL(userId) {
     // 🩵 FIXED SINGLE-RUNNER LOGIC
     if (selections.length === 1) {
       for (const b of marketOrders) {
+        // For MATCHED bets, price is already the executed price; for PENDING, it's the original selected price
+        const price = Number(b.price);
+        // For MATCHED bets, use matched size (should equal full size); for PENDING, use original size
+        const size = Number(b.status === "MATCHED" ? (b.matched || b.size) : b.size);
         if (b.side === "B") {
-          marketLiability += b.size;
+          marketLiability += size;
         } else if (b.side === "L") {
-          marketLiability += (b.price - 1) * b.size;
+          marketLiability += (price - 1) * size;
         }
       }
     } else {
@@ -950,8 +1046,11 @@ async function recalculateUserLiableAndPnL(userId) {
     }
   }
 
+  // Calculate wallet balance correctly: start from current wallet + old liability, then subtract new liability
+  // This ensures we don't reset when placing bets on multiple runners
   const oldLiability = user.liable || 0;
-  const newWallet = (user.initial_wallet_balance || user.wallet_balance + oldLiability) - totalLiability;
+  const baseWallet = user.wallet_balance || 0;
+  const newWallet = Math.max(0, baseWallet + oldLiability - totalLiability);
 
   await usersCollection.updateOne(
     { _id: new ObjectId(userId) },
@@ -1166,25 +1265,30 @@ router.post("/cancel/:requestId", authMiddleware(), async (req, res) => {
     const order = (user.orders || []).find(o => o.requestId == requestId);
     if (!order) return res.status(404).json({ error: "Order not found" });
     if (order.status !== "PENDING") {
-      return res.status(400).json({ error: "Only unmatched (PENDING) bets can be cancelled" });
+      return res.status(400).json({ error: "Only PENDING bets can be cancelled" });
     }
 
-    // Wallet balance wapas karo
+    // Calculate refund amount (liability for this bet)
+    const refundAmount = order.side === "B" ? order.size : (order.price - 1) * order.size;
+
+    // Mark order as cancelled
     await usersCollection.updateOne(
       { _id: new ObjectId(userId) },
       {
-        $inc: { wallet_balance: order.size },
         $set: { "orders.$[o].status": "CANCELLED", "orders.$[o].updated_at": new Date() },
         $push: {
           transactions: {
             type: "BET_CANCELLED",
-            amount: order.size,
+            amount: refundAmount,
             created_at: new Date()
           }
         }
       },
       { arrayFilters: [{ "o.requestId": requestId }] }
     );
+
+    // Recalculate liability after cancellation
+    await recalculateUserLiableAndPnL(userId);
 
     res.json({ success: true, message: "Bet cancelled", orderId: requestId });
   } catch (err) {
@@ -1205,20 +1309,18 @@ router.post("/cancel-all", authMiddleware(), async (req, res) => {
 
     const pendingOrders = (user.orders || []).filter(o => o.status === "PENDING");
     if (pendingOrders.length === 0) {
-      return res.json({ success: true, message: "No unmatched bets to cancel" });
+      return res.json({ success: true, message: "No pending bets to cancel" });
     }
 
-    const refundAmount = pendingOrders.reduce((sum, o) => sum + o.size, 0);
-
+    // Mark all pending orders as cancelled
     await usersCollection.updateOne(
       { _id: new ObjectId(userId) },
       {
-        $inc: { wallet_balance: refundAmount },
         $set: { "orders.$[o].status": "CANCELLED", "orders.$[o].updated_at": new Date() },
         $push: {
           transactions: {
             type: "BET_CANCELLED_ALL",
-            amount: refundAmount,
+            amount: 0,
             created_at: new Date()
           }
         }
@@ -1226,7 +1328,15 @@ router.post("/cancel-all", authMiddleware(), async (req, res) => {
       { arrayFilters: [{ "o.status": "PENDING" }] }
     );
 
-    res.json({ success: true, message: "All unmatched bets cancelled", refund: refundAmount });
+    // Recalculate liability after cancellation
+    await recalculateUserLiableAndPnL(userId);
+
+    const freshUser = await usersCollection.findOne({ _id: new ObjectId(userId) });
+    res.json({ 
+      success: true, 
+      message: "All pending bets cancelled",
+      cancelledCount: pendingOrders.length
+    });
   } catch (err) {
     console.error("Cancel all bets error:", err);
     res.status(500).json({ error: err.message });
@@ -1239,22 +1349,6 @@ router.get("/all", authMiddleware(), async (req, res) => {
   const user = await usersCollection.findOne({ _id: new ObjectId(req.user._id) });
   if (!user) return res.status(404).json({ error: "User not found" });
   res.json(user.orders || []);
-});
-router.get("/transactions", authMiddleware(), async (req, res) => {
-  try {
-    const usersCollection = getUsersCollection();
-    const user = await usersCollection.findOne({ _id: new ObjectId(req.user._id) });
-    if (!user) return res.status(404).json({ error: "User not found" });
-
-    const deposits = (user.transactions || []).filter(
-      t => t.type === "deposit" && t.status === "completed"
-    );
-
-    res.json(deposits);
-  } catch (err) {
-    console.error("Error fetching deposit transactions:", err);
-    res.status(500).json({ error: "Failed to fetch transactions" });
-  }
 });
 
 // List of all known keywords per sport
@@ -1302,7 +1396,45 @@ router.get("/with-category", authMiddleware(), async (req, res) => {
 
 
 
+/* ---------------- Auto-match endpoint (called when market odds update) ---------------- */
+router.post("/auto-match/:marketId", async (req, res) => {
+  try {
+    const { marketId } = req.params;
+    const { selectionId } = req.body;
+
+    if (selectionId) {
+      // Auto-match for specific selection
+      await autoMatchPendingBets(marketId, selectionId);
+      res.json({ success: true, message: `Auto-matching triggered for market ${marketId}, selection ${selectionId}` });
+    } else {
+      // Auto-match for all selections in the market
+      const usersCollection = getUsersCollection();
+      const users = await usersCollection.find({
+        "orders.marketId": marketId,
+        "orders.status": "PENDING"
+      }).toArray();
+
+      const uniqueSelections = [...new Set(
+        users.flatMap(u => (u.orders || [])
+          .filter(o => o.marketId === marketId && o.status === "PENDING")
+          .map(o => o.selectionId)
+        )
+      )];
+
+      for (const selId of uniqueSelections) {
+        await autoMatchPendingBets(marketId, selId);
+      }
+
+      res.json({ success: true, message: `Auto-matching triggered for market ${marketId}`, selections: uniqueSelections.length });
+    }
+  } catch (err) {
+    console.error("❌ Auto-match endpoint error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = {
   router,
-  settleEventBets
+  settleEventBets,
+  autoMatchPendingBets
 };
