@@ -143,66 +143,9 @@ const getUsersCollection = () => {
   }
   return mongoose.connection.db.collection(config.database.collections.users);
 };
-function checkMatch(order, runner) {
-  let matchedSize = 0;
-  let status = "PENDING";
-  let executedPrice = order.price;
-
-  const backs = runner.ex.availableToBack || [];
-  const lays = runner.ex.availableToLay || [];
-
-  // BACK BET LOGIC
-  if (order.type === "BACK" || order.side === "B") {
-    if (backs.length > 0) {
-      const backPrices = backs.map(b => b.price);
-      const highestBack = Math.max(...backPrices);
-      const lowestBack = Math.min(...backPrices);
-      const selectedPrice = Number(order.price);
-
-      // Rule: Match if selected odd <= any available odd OR < smallest available odd
-      // Always match at the highest available back odd (unless selected > highest)
-      if (selectedPrice <= highestBack || selectedPrice < lowestBack) {
-        // Match at highest available back odd
-        executedPrice = highestBack;
-        matchedSize = order.size;
-        status = "MATCHED";
-      } else if (selectedPrice > highestBack) {
-        // Pending if selected odd > largest available odd
-        status = "PENDING";
-      }
-    } else {
-      // No back odds available, keep as pending
-      status = "PENDING";
-    }
-  }
-
-  // LAY BET LOGIC (opposite of back)
-  else if (order.type === "LAY" || order.side === "L") {
-    if (lays.length > 0) {
-      const layPrices = lays.map(l => l.price);
-      const lowestLay = Math.min(...layPrices);
-      const highestLay = Math.max(...layPrices);
-      const selectedPrice = Number(order.price);
-
-      // Rule: Match if selected odd >= lowest available lay odd
-      // Always match at the lowest available lay odd
-      if (selectedPrice >= lowestLay) {
-        // Match at lowest available lay odd
-        executedPrice = lowestLay;
-        matchedSize = order.size;
-        status = "MATCHED";
-      } else if (selectedPrice < lowestLay) {
-        // Pending if selected odd < lowest available odd
-        status = "PENDING";
-      }
-    } else {
-      // No lay odds available, keep as pending
-      status = "PENDING";
-    }
-  }
-
-  return { matchedSize, status, executedPrice };
-}
+// Note: checkMatch function is defined in Orders.js and imported/used there
+// This duplicate function is removed to avoid conflicts
+// Use the checkMatch from Orders.js module instead
 
 // 🚀 Fetch live markets for multiple sports
 
@@ -2655,6 +2598,79 @@ module.exports  ={
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      
 
 
 
