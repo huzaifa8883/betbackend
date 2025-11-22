@@ -35,8 +35,8 @@ const PORT = process.env.PORT || config.api.port || 5000;
 app.use(cors({
   origin: function (origin, callback) {
     const allowedOrigins = [
-      'https://nonalexch.com',
-      'https://www.nonalexch.com',
+     'https://bfexch.com',
+      'https://www.bfexch.com',
       'http://localhost:8000'
     ];
     if (!origin || allowedOrigins.includes(origin)) {
