@@ -897,23 +897,46 @@ router.post("/", authMiddleware(), async (req, res) => {
       };
     });
 
+    // Calculate tentative liability per market (using MAX for multi-runner markets)
     const tentativeAll = [...(dbUser.orders || []), ...normalizedOrders];
-    const tentativeSelections = [...new Set(tentativeAll.map(b => String(b.selectionId)))];
-    const tentativeTeamPnL = {};
-    for (const s of tentativeSelections) tentativeTeamPnL[s] = 0;
-    for (const bet of tentativeAll) {
-      const sel = String(bet.selectionId);
-      const { side, price, size } = bet;
-      if (side === "B") {
-        tentativeTeamPnL[sel] += (price - 1) * size;
-        tentativeSelections.forEach(o => { if (o !== sel) tentativeTeamPnL[o] -= size; });
+    const tentativeMarkets = [...new Set(tentativeAll.map(b => b.marketId))];
+    let tentativeLiability = 0;
+    
+    for (const marketId of tentativeMarkets) {
+      const marketOrders = tentativeAll.filter(o => o.marketId === marketId);
+      const selections = [...new Set(marketOrders.map(b => String(b.selectionId)))];
+      const tentativeTeamPnL = {};
+      for (const s of selections) tentativeTeamPnL[s] = 0;
+      
+      for (const bet of marketOrders) {
+        const sel = String(bet.selectionId);
+        const { side, price, size } = bet;
+        if (side === "B") {
+          tentativeTeamPnL[sel] += (price - 1) * size;
+          selections.forEach(o => { if (o !== sel) tentativeTeamPnL[o] -= size; });
+        } else {
+          tentativeTeamPnL[sel] -= (price - 1) * size;
+          selections.forEach(o => { if (o !== sel) tentativeTeamPnL[o] += size; });
+        }
+      }
+      
+      // For single-runner markets: sum all negative PnL
+      // For multi-runner markets: use MAX liability
+      if (selections.length === 1) {
+        for (const v of Object.values(tentativeTeamPnL)) {
+          if (v < 0) tentativeLiability += Math.abs(v);
+        }
       } else {
-        tentativeTeamPnL[sel] -= (price - 1) * size;
-        tentativeSelections.forEach(o => { if (o !== sel) tentativeTeamPnL[o] += size; });
+        // Multi-runner: use MAX liability
+        const runnerLiabilities = [];
+        for (const v of Object.values(tentativeTeamPnL)) {
+          if (v < 0) runnerLiabilities.push(Math.abs(v));
+        }
+        if (runnerLiabilities.length > 0) {
+          tentativeLiability += Math.max(...runnerLiabilities);
+        }
       }
     }
-    let tentativeLiability = 0;
-    for (const v of Object.values(tentativeTeamPnL)) if (v < 0) tentativeLiability += Math.abs(v);
     if (tentativeLiability > availableForLay) {
       return res.status(400).json({ error: "Insufficient funds for this bet (tentative check)" });
     }
