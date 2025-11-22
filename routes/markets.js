@@ -9,7 +9,7 @@ const router = express.Router();
 const mongoose = require('mongoose');
 const config = require('../config');
 const axios = require('axios'); // Yeh neeche likha hua hai
-const {settleEventBets } = require('./Orders'); // Import settleEventBets function
+const { settleEventBets, autoMatchPendingBets } = require('./Orders'); // Import settleEventBets and autoMatchPendingBets functions
 const mockPopularMarkets = [
   {
     id: '1.123456789',
@@ -145,42 +145,64 @@ const getUsersCollection = () => {
 };
 function checkMatch(order, runner) {
   let matchedSize = 0;
-  let status = "UNMATCHED";
+  let status = "PENDING";
   let executedPrice = order.price;
 
   const backs = runner.ex.availableToBack || [];
   const lays = runner.ex.availableToLay || [];
 
-  if (order.type === "BACK" && backs.length > 0) {
-    // Sabse bara back odd (highest)
-    const highestBack = Math.max(...backs.map(b => b.price));
+  // BACK BET LOGIC
+  if (order.type === "BACK" || order.side === "B") {
+    if (backs.length > 0) {
+      const backPrices = backs.map(b => b.price);
+      const highestBack = Math.max(...backPrices);
+      const lowestBack = Math.min(...backPrices);
+      const selectedPrice = Number(order.price);
 
-    if (highestBack >= order.price) {
-      executedPrice = highestBack;
-      matchedSize = order.size; // abhi full match (partial ka size check add kar sakte)
-      status = "MATCHED";
+      // Rule: Match if selected odd <= any available odd OR < smallest available odd
+      // Always match at the highest available back odd (unless selected > highest)
+      if (selectedPrice <= highestBack || selectedPrice < lowestBack) {
+        // Match at highest available back odd
+        executedPrice = highestBack;
+        matchedSize = order.size;
+        status = "MATCHED";
+      } else if (selectedPrice > highestBack) {
+        // Pending if selected odd > largest available odd
+        status = "PENDING";
+      }
     } else {
-      status = "UNMATCHED";
+      // No back odds available, keep as pending
+      status = "PENDING";
     }
   }
 
-  else if (order.type === "LAY" && lays.length > 0) {
-    // Sabse chhota lay odd (lowest)
-    const lowestLay = Math.min(...lays.map(l => l.price));
+  // LAY BET LOGIC (opposite of back)
+  else if (order.type === "LAY" || order.side === "L") {
+    if (lays.length > 0) {
+      const layPrices = lays.map(l => l.price);
+      const lowestLay = Math.min(...layPrices);
+      const highestLay = Math.max(...layPrices);
+      const selectedPrice = Number(order.price);
 
-    if (lowestLay <= order.price) {
-      executedPrice = lowestLay;
-      matchedSize = order.size;
-      status = "MATCHED";
+      // Rule: Match if selected odd >= lowest available lay odd
+      // Always match at the lowest available lay odd
+      if (selectedPrice >= lowestLay) {
+        // Match at lowest available lay odd
+        executedPrice = lowestLay;
+        matchedSize = order.size;
+        status = "MATCHED";
+      } else if (selectedPrice < lowestLay) {
+        // Pending if selected odd < lowest available odd
+        status = "PENDING";
+      }
     } else {
-      status = "UNMATCHED";
+      // No lay odds available, keep as pending
+      status = "PENDING";
     }
   }
 
   return { matchedSize, status, executedPrice };
 }
-
-
 
 // 🚀 Fetch live markets for multiple sports
 
@@ -2407,14 +2429,13 @@ router.get('/:marketId', async (req, res) => {
 
 // ✅ Replace with your real App Key and Session Token
 
-
 function getWinnerFromMarket(market) {
   if (!market.runners || !Array.isArray(market.runners)) return null;
   const winner = market.runners.find(r => r.status === "WINNER");
   return winner ? winner.selectionId : null;
 }
 
-const settledMarkets = new Set(); // memory-level tracking
+const settledMarkets = new Set();
 
 async function checkMarketStatusAndSettle(market) {
   if (market.status === "CLOSED" && !settledMarkets.has(market.marketId)) {
@@ -2429,47 +2450,55 @@ async function checkMarketStatusAndSettle(market) {
   }
 }
 
-
-// Example usage after fetching market data from Betfair
 async function updateMarkets() {
   const usersCollection = getUsersCollection();
 
-  // 1️⃣ Sab users fetch karo (sirf unke orders chahiye)
   const allUsers = await usersCollection.find({}, { projection: { orders: 1 } }).toArray();
 
-  // 2️⃣ Sab marketIds collect karo users ke orders se
   const allMarketIds = [];
+  const marketSelectionMap = {};
+
   for (const user of allUsers) {
     if (!user.orders) continue;
+
     for (const order of user.orders) {
-      if (order.status === "MATCHED" && order.marketId) {
+      if ((order.status === "MATCHED" || order.status === "PENDING") && order.marketId) {
         allMarketIds.push(order.marketId);
+
+        if (!marketSelectionMap[order.marketId]) {
+          marketSelectionMap[order.marketId] = new Set();
+        }
+
+        if (order.selectionId) {
+          marketSelectionMap[order.marketId].add(order.selectionId);
+        }
       }
     }
   }
 
-  // 3️⃣ Unique marketIds nikalo
+  // FIXED: uniqueMarketIds defined
   const uniqueMarketIds = [...new Set(allMarketIds)];
 
-  if (uniqueMarketIds.length === 0) {
-    console.log("⚠️ No active markets found to update");
-    return;
-  }
-
-  console.log("🔄 Running updateMarkets check for:", uniqueMarketIds);
-
-  // 4️⃣ Betfair se in markets ka status lo
   const markets = await getMarketsFromBetfair(uniqueMarketIds);
 
-  // 5️⃣ Har market ke liye settlement check karo
   for (const market of markets) {
     await checkMarketStatusAndSettle(market);
+  }
+
+  for (const marketId of uniqueMarketIds) {
+    const selections = marketSelectionMap[marketId] || new Set();
+    for (const selectionId of selections) {
+      try {
+        await autoMatchPendingBets(marketId, selectionId);
+      } catch (err) {
+        console.error(`❌ Auto-match error for market ${marketId}, selection ${selectionId}:`, err);
+      }
+    }
   }
 
   console.log("✅ updateMarkets executed for all active markets");
 }
 
-        
 
 module.exports  ={
   router,
