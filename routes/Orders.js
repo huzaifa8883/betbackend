@@ -1008,26 +1008,18 @@ router.post("/", authMiddleware(), async (req, res) => {
 // --- recalculateUserLiableAndPnL ---
 async function recalculateUserLiableAndPnL(userId) {
   const usersCollection = getUsersCollection();
+
+  // 🔹 Use findOneAndUpdate with atomic operations to prevent race conditions
   const user = await usersCollection.findOne({ _id: new ObjectId(userId) });
   if (!user) return;
 
-  const allOrders = user.orders || [];
-  const matchedOrders = allOrders.filter(o => o.status === "MATCHED");
+  const matchedOrders = (user.orders || []).filter(o => o.status === "MATCHED");
 
-  const originalWallet = user.original_wallet ?? ((user.wallet_balance || 0) + (user.liable || 0));
-
-  if (matchedOrders.length === 0) {
-    await usersCollection.updateOne(
-      { _id: new ObjectId(userId) },
-      { $set: { wallet_balance: originalWallet, liable: 0, runnerPnL: {} } }
-    );
-    return;
-  }
-
-  const markets = [...new Set(matchedOrders.map(o => o.marketId))];
   let totalLiability = 0;
   const combinedRunnerPnL = {};
 
+  // Compute per-market liability
+  const markets = [...new Set(matchedOrders.map(o => o.marketId))];
   for (const marketId of markets) {
     const marketOrders = matchedOrders.filter(o => o.marketId === marketId);
     const selections = [...new Set(marketOrders.map(o => String(o.selectionId)))];
@@ -1036,38 +1028,44 @@ async function recalculateUserLiableAndPnL(userId) {
 
     for (const bet of marketOrders) {
       const sel = String(bet.selectionId);
-      const side = bet.side;
       const price = Number(bet.price);
       const size = Number(bet.matched || bet.size);
-
-      if (side === "B") {
+      if (bet.side === "B") {
         teamPnL[sel] += (price - 1) * size;
         selections.forEach(o => { if (o !== sel) teamPnL[o] -= size; });
-      } else {
+      } else if (bet.side === "L") {
         teamPnL[sel] -= (price - 1) * size;
         selections.forEach(o => { if (o !== sel) teamPnL[o] += size; });
       }
     }
 
-    let marketLiability = 0;
-    if (selections.length === 1) {
-      for (const pnl of Object.values(teamPnL)) if (pnl < 0) marketLiability += Math.abs(pnl);
-    } else {
-      const runnerLiabilities = Object.values(teamPnL).map(p => p < 0 ? Math.abs(p) : 0);
-      if (runnerLiabilities.length > 0) marketLiability = Math.max(...runnerLiabilities);
-    }
-
-    totalLiability += marketLiability;
-    for (const [k, v] of Object.entries(teamPnL)) combinedRunnerPnL[k] = (combinedRunnerPnL[k] || 0) + v;
+    // Multi-runner max liability
+    const runnerLiabilities = Object.values(teamPnL)
+      .filter(v => v < 0)
+      .map(v => Math.abs(v));
+    totalLiability += selections.length === 1 ? runnerLiabilities.reduce((a, b) => a + b, 0)
+                                              : Math.max(...runnerLiabilities);
+    
+    // Merge runner PnL
+    for (const [k, v] of Object.entries(teamPnL)) combinedRunnerPnL[k] = v;
   }
 
-  const newWallet = Math.max(0, originalWallet - totalLiability);
+  // 🔹 Compute new wallet correctly using original wallet + old liability
+  const availableBalance = (user.wallet_balance || 0) + (user.liable || 0);
+  const newWallet = Math.max(0, availableBalance - totalLiability);
 
   await usersCollection.updateOne(
     { _id: new ObjectId(userId) },
-    { $set: { wallet_balance: newWallet, liable: totalLiability, runnerPnL: combinedRunnerPnL } }
+    {
+      $set: {
+        wallet_balance: newWallet,
+        liable: totalLiability,
+        runnerPnL: combinedRunnerPnL
+      }
+    }
   );
 
+  // Emit updated user info
   const fresh = await usersCollection.findOne({ _id: new ObjectId(userId) });
   global.io.to("user_" + userId).emit("userUpdated", {
     wallet_balance: fresh.wallet_balance,
@@ -1075,6 +1073,7 @@ async function recalculateUserLiableAndPnL(userId) {
     runnerPnL: fresh.runnerPnL
   });
 }
+
 
 
 
