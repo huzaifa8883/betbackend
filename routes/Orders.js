@@ -277,16 +277,23 @@ function checkMatch(order, runner) {
       const lowestBack = Math.min(...backPrices);
       const selectedPrice = Number(order.price);
 
-      // Rule: Match if selected odd <= any available odd OR < smallest available odd
-      // Always match at the highest available back odd (unless selected > highest)
-      if (selectedPrice <= highestBack || selectedPrice < lowestBack) {
+      // Rule 1: If selected odd ≤ smallest available odd → MATCHED
+      if (selectedPrice <= lowestBack) {
         // Match at highest available back odd
         executedPrice = highestBack;
         matchedSize = order.size;
         status = "MATCHED";
-      } else if (selectedPrice > highestBack) {
-        // Pending if selected odd > largest available odd
+      }
+      // Rule 2: If selected odd > largest available odd → PENDING
+      else if (selectedPrice > highestBack) {
         status = "PENDING";
+      }
+      // Rule 3: If selected odd is between current odds → MATCHED at highest available back odd
+      else {
+        // Selected odd is between lowestBack and highestBack
+        executedPrice = highestBack;
+        matchedSize = order.size;
+        status = "MATCHED";
       }
     } else {
       // No back odds available, keep as pending
@@ -302,16 +309,23 @@ function checkMatch(order, runner) {
       const highestLay = Math.max(...layPrices);
       const selectedPrice = Number(order.price);
 
-      // Rule: Match if selected odd >= lowest available lay odd
-      // Always match at the lowest available lay odd
-      if (selectedPrice >= lowestLay) {
+      // Rule 1: If selected odd ≥ largest available odd → MATCHED
+      if (selectedPrice >= highestLay) {
         // Match at lowest available lay odd
         executedPrice = lowestLay;
         matchedSize = order.size;
         status = "MATCHED";
-      } else if (selectedPrice < lowestLay) {
-        // Pending if selected odd < lowest available odd
+      }
+      // Rule 2: If selected odd < smallest available odd → PENDING
+      else if (selectedPrice < lowestLay) {
         status = "PENDING";
+      }
+      // Rule 3: If selected odd is between current odds → MATCHED at lowest available lay odd
+      else {
+        // Selected odd is between lowestLay and highestLay
+        executedPrice = lowestLay;
+        matchedSize = order.size;
+        status = "MATCHED";
       }
     } else {
       // No lay odds available, keep as pending
@@ -1034,8 +1048,18 @@ async function recalculateUserLiableAndPnL(userId) {
         }
       }
     } else {
-      for (const pnl of Object.values(teamPnL)) {
-        if (pnl < 0) marketLiability += Math.abs(pnl);
+      // 🩵 MULTI-RUNNER LOGIC: Use MAX liability, not sum
+      // If a single bet covers multiple runners, liability = max liability among all runners
+      const runnerLiabilities = [];
+      for (const [selectionId, pnl] of Object.entries(teamPnL)) {
+        if (pnl < 0) {
+          runnerLiabilities.push(Math.abs(pnl));
+        }
+      }
+      
+      if (runnerLiabilities.length > 0) {
+        // Use the maximum liability among all runners
+        marketLiability = Math.max(...runnerLiabilities);
       }
     }
 
