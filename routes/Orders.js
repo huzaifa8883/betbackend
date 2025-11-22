@@ -861,12 +861,19 @@ router.post("/", authMiddleware(), async (req, res) => {
     }
 
     const usersCollection = getUsersCollection();
-    const dbUser = await usersCollection.findOne({ _id: new ObjectId(user._id) });
+    let dbUser = await usersCollection.findOne({ _id: new ObjectId(user._id) });
     if (!dbUser) return res.status(404).json({ error: "User not found" });
 
-    // Base wallet for calculations (before any new bets)
-    const baseWallet = (dbUser.wallet_balance || 0) + (dbUser.liable || 0);
+    // Save original wallet if not already present
+    if (dbUser.original_wallet === undefined) {
+      await usersCollection.updateOne(
+        { _id: new ObjectId(user._id) },
+        { $set: { original_wallet: (dbUser.wallet_balance || 0) + (dbUser.liable || 0) } }
+      );
+      dbUser.original_wallet = (dbUser.wallet_balance || 0) + (dbUser.liable || 0);
+    }
 
+    // Enrich orders with event/category
     await Promise.all(
       orders.map(async (order) => {
         const { eventName, category } = await getEventDetailsFromBetfair(order.marketId);
@@ -875,6 +882,7 @@ router.post("/", authMiddleware(), async (req, res) => {
       })
     );
 
+    // Normalize orders
     const normalizedOrders = orders.map((order) => {
       const price = parseFloat(order.price);
       const size = parseFloat(order.size);
@@ -895,7 +903,7 @@ router.post("/", authMiddleware(), async (req, res) => {
       };
     });
 
-    // Tentative liability check (include existing MATCHED + new PENDING bets)
+    // Tentative liability check (before saving)
     const existingMatchedOrders = (dbUser.orders || []).filter(o => o.status === "MATCHED");
     const tentativeAll = [...existingMatchedOrders, ...normalizedOrders];
     const tentativeMarkets = [...new Set(tentativeAll.map(b => b.marketId))];
@@ -932,11 +940,12 @@ router.post("/", authMiddleware(), async (req, res) => {
       }
     }
 
+    const baseWallet = dbUser.original_wallet;
     if (tentativeLiability > baseWallet) {
       return res.status(400).json({ error: "Insufficient funds for this bet (tentative check)" });
     }
 
-    // Save orders (PENDING)
+    // Save PENDING orders
     await usersCollection.updateOne(
       { _id: new ObjectId(user._id) },
       {
@@ -952,8 +961,7 @@ router.post("/", authMiddleware(), async (req, res) => {
       }
     );
 
-    // Check match for all orders
-    const matchedOrdersToRecalc = [];
+    // Check match and recalc wallet immediately for each order
     for (let order of normalizedOrders) {
       const runner = await getMarketBookFromBetfair(order.marketId, order.selectionId);
       if (!runner) continue;
@@ -972,12 +980,10 @@ router.post("/", authMiddleware(), async (req, res) => {
         }
       );
 
-      if (status === "MATCHED") matchedOrdersToRecalc.push(order);
-    }
-
-    // Recalculate wallet/liability once after all matched updates
-    if (matchedOrdersToRecalc.length > 0) {
-      await recalculateUserLiableAndPnL(user._id);
+      // ⚡ Immediate wallet/liability recalc
+      if (status === "MATCHED") {
+        await recalculateUserLiableAndPnL(user._id);
+      }
     }
 
     // Trigger auto-match for all new orders
@@ -999,7 +1005,7 @@ router.post("/", authMiddleware(), async (req, res) => {
   }
 });
 
-// --- recalculateUserLiableAndPnL (UPDATED) ---
+// --- recalculateUserLiableAndPnL ---
 async function recalculateUserLiableAndPnL(userId) {
   const usersCollection = getUsersCollection();
   const user = await usersCollection.findOne({ _id: new ObjectId(userId) });
@@ -1008,7 +1014,6 @@ async function recalculateUserLiableAndPnL(userId) {
   const allOrders = user.orders || [];
   const matchedOrders = allOrders.filter(o => o.status === "MATCHED");
 
-  // Original wallet: before any matched bets
   const originalWallet = user.original_wallet ?? ((user.wallet_balance || 0) + (user.liable || 0));
 
   if (matchedOrders.length === 0) {
@@ -1044,7 +1049,6 @@ async function recalculateUserLiableAndPnL(userId) {
       }
     }
 
-    // Market liability
     let marketLiability = 0;
     if (selections.length === 1) {
       for (const pnl of Object.values(teamPnL)) if (pnl < 0) marketLiability += Math.abs(pnl);
@@ -1054,7 +1058,6 @@ async function recalculateUserLiableAndPnL(userId) {
     }
 
     totalLiability += marketLiability;
-
     for (const [k, v] of Object.entries(teamPnL)) combinedRunnerPnL[k] = (combinedRunnerPnL[k] || 0) + v;
   }
 
@@ -1072,6 +1075,7 @@ async function recalculateUserLiableAndPnL(userId) {
     runnerPnL: fresh.runnerPnL
   });
 }
+
 
 
 /* ------------------------------ SETTLEMENT ------------------------------ */
