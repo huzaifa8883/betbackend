@@ -880,14 +880,17 @@ router.post("/", authMiddleware(), async (req, res) => {
     const normalizedOrders = orders.map((order) => {
       const price = parseFloat(order.price);
       const size = parseFloat(order.size);
-      const liable = order.side === "B" ? size : (price - 1) * size;
+      const inputSide = order.side;
+      const side = (inputSide === "B" || inputSide === "BACK") ? "BACK" : "LAY"; // Normalize to full strings
+      const liable = side === "BACK" ? size : (price - 1) * size;
       return {
         ...order,
         price,
         size,
         liable,
-        type: order.side === "B" ? "BACK" : "LAY",
-        position: order.side === "B" ? "BACK" : "LAY",
+        side, // Store normalized side
+        type: side,
+        position: side,
         status: "PENDING",
         matched: 0,
         requestId: Date.now() + Math.floor(Math.random() * 1000),
@@ -900,46 +903,48 @@ router.post("/", authMiddleware(), async (req, res) => {
     // Calculate tentative liability per market (using MAX for multi-runner markets)
     // Include existing MATCHED bets + new PENDING bets (to check if they would exceed funds when matched)
     const existingMatchedOrders = (dbUser.orders || []).filter(o => o.status === "MATCHED");
+    // Normalize existing orders' sides if needed (assuming they are already normalized; add similar normalization if not)
     const tentativeAll = [...existingMatchedOrders, ...normalizedOrders]; // Only MATCHED + new bets
     const tentativeMarkets = [...new Set(tentativeAll.map(b => b.marketId))];
     let tentativeLiability = 0;
     
     for (const marketId of tentativeMarkets) {
+      const marketCatalogue = await getMarketCatalogueFromBetfair(marketId);
+      const allSelections = marketCatalogue.runners.map(r => String(r.selectionId));
       const marketOrders = tentativeAll.filter(o => o.marketId === marketId);
       const selections = [...new Set(marketOrders.map(b => String(b.selectionId)))];
+      const hasOther = allSelections.length > selections.length;
       const tentativeTeamPnL = {};
       for (const s of selections) tentativeTeamPnL[s] = 0;
       
+      let pnlOther = 0;
+
       for (const bet of marketOrders) {
         const sel = String(bet.selectionId);
-        const { side, price, size } = bet;
+        const { side, price } = bet;
         // Use matched size for MATCHED bets, original size for new PENDING bets
         const betSize = bet.status === "MATCHED" ? (bet.matched || bet.size) : bet.size;
         
-        if (side === "B") {
+        if (side === "BACK") {
           tentativeTeamPnL[sel] += (price - 1) * betSize;
           selections.forEach(o => { if (o !== sel) tentativeTeamPnL[o] -= betSize; });
-        } else {
+          pnlOther -= betSize;
+        } else { // LAY
           tentativeTeamPnL[sel] -= (price - 1) * betSize;
           selections.forEach(o => { if (o !== sel) tentativeTeamPnL[o] += betSize; });
+          pnlOther += betSize;
         }
       }
       
-      // For single-runner markets: sum all negative PnL
-      // For multi-runner markets: use MAX liability
-      if (selections.length === 1) {
-        for (const v of Object.values(tentativeTeamPnL)) {
-          if (v < 0) tentativeLiability += Math.abs(v);
-        }
-      } else {
-        // Multi-runner: use MAX liability
-        const runnerLiabilities = [];
-        for (const v of Object.values(tentativeTeamPnL)) {
-          if (v < 0) runnerLiabilities.push(Math.abs(v));
-        }
-        if (runnerLiabilities.length > 0) {
-          tentativeLiability += Math.max(...runnerLiabilities);
-        }
+      // Collect negative PnL absolutes for all scenarios, including "other" only if unbetted runners exist
+      const runnerLiabilities = [];
+      for (const v of Object.values(tentativeTeamPnL)) {
+        if (v < 0) runnerLiabilities.push(Math.abs(v));
+      }
+      if (hasOther && pnlOther < 0) runnerLiabilities.push(Math.abs(pnlOther));
+
+      if (runnerLiabilities.length > 0) {
+        tentativeLiability += Math.max(...runnerLiabilities);
       }
     }
     if (tentativeLiability > availableForLay) {
@@ -1068,72 +1073,55 @@ async function recalculateUserLiableAndPnL(userId) {
   const combinedRunnerPnL = {};
 
   for (const marketId of markets) {
+    const marketCatalogue = await getMarketCatalogueFromBetfair(marketId);
+    const allSelections = marketCatalogue.runners.map(r => String(r.selectionId));
     const marketOrders = matchedOrders.filter(o => o.marketId === marketId);
     const selections = [...new Set(marketOrders.map(o => String(o.selectionId)))];
+    const hasOther = allSelections.length > selections.length;
     const teamPnL = {};
     for (const s of selections) teamPnL[s] = 0;
 
+    let pnlOther = 0;
+
     for (const bet of marketOrders) {
       const sel = String(bet.selectionId);
-      const side = bet.side;
+      let side = bet.side;
+      // Normalize side if stored as "B"/"L" (for legacy orders; assuming new ones are "BACK"/"LAY")
+      if (side === "B") side = "BACK";
+      if (side === "L") side = "LAY";
       // For MATCHED bets, price is the executed price
       const price = Number(bet.price);
       // For MATCHED bets, use matched size (should equal full size)
       const size = Number(bet.matched || bet.size);
 
-      if (side === "B") {
+      if (side === "BACK") {
         teamPnL[sel] += (price - 1) * size;
         selections.forEach(o => { if (o !== sel) teamPnL[o] -= size; });
-      } else if (side === "L") {
+        pnlOther -= size;
+      } else { // LAY
         teamPnL[sel] -= (price - 1) * size;
         selections.forEach(o => { if (o !== sel) teamPnL[o] += size; });
+        pnlOther += size;
       }
     }
 
-    let marketLiability = 0;
-
-    // Calculate liability per runner first
-    const runnerLiabilities = {};
+    // Collect negative PnL absolutes for all scenarios, including "other" only if unbetted runners exist
+    const runnerLiabilities = [];
     for (const [selectionId, pnl] of Object.entries(teamPnL)) {
       if (pnl < 0) {
-        runnerLiabilities[selectionId] = Math.abs(pnl);
+        runnerLiabilities.push(Math.abs(pnl));
       }
+      combinedRunnerPnL[selectionId] = (combinedRunnerPnL[selectionId] || 0) + pnl;
     }
+    if (hasOther && pnlOther < 0) runnerLiabilities.push(Math.abs(pnlOther));
 
-    // 🩵 SINGLE-RUNNER MARKET: Sum all MATCHED bets (simple case)
-    if (selections.length === 1) {
-      for (const b of marketOrders) {
-        // Only MATCHED bets are included here
-        const price = Number(b.price);
-        const size = Number(b.matched || b.size);
-        if (b.side === "B") {
-          marketLiability += size;
-        } else if (b.side === "L") {
-          marketLiability += (price - 1) * size;
-        }
-      }
-    } else {
-      // 🩵 MULTI-RUNNER MARKET: Use MAX liability among runners
-      // This handles the case where you have bets on multiple runners in the same market
-      // You only need to cover the worst-case scenario (one runner wins), not all scenarios
-      const liabilityValues = Object.values(runnerLiabilities);
-      if (liabilityValues.length > 0) {
-        // Use the maximum liability among all runners
-        marketLiability = Math.max(...liabilityValues);
-      }
+    let marketLiability = 0;
+    if (runnerLiabilities.length > 0) {
+      marketLiability = Math.max(...runnerLiabilities);
     }
-
     totalLiability += marketLiability;
-
-    for (const [k, v] of Object.entries(teamPnL)) {
-      combinedRunnerPnL[k] = (combinedRunnerPnL[k] || 0) + v;
-    }
   }
 
-  // 🔹 CRITICAL FIX: Calculate wallet balance from ALL transactions, not just current state
-  // We need to find the base wallet balance (before any bets) by looking at transactions
-  // OR we need to ensure we're reading the latest state correctly
-  
   // Get the latest user state again to ensure we have the most recent wallet/liability
   const latestUser = await usersCollection.findOne({ _id: new ObjectId(userId) });
   if (!latestUser) return;
@@ -1170,8 +1158,6 @@ async function recalculateUserLiableAndPnL(userId) {
     runnerPnL: fresh.runnerPnL
   });
 }
-
-
 /* ------------------------------ SETTLEMENT ------------------------------ */
 async function settleEventBets(eventId, winningSelectionId) {
   const usersCollection = getUsersCollection();
