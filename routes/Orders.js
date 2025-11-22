@@ -1038,24 +1038,19 @@ router.post("/", authMiddleware(), async (req, res) => {
 async function recalculateUserLiableAndPnL(userId) {
   const usersCollection = getUsersCollection();
   
-  // 🔹 Use findOneAndUpdate with atomic operations to prevent race conditions
-  // First, get the user to calculate new values
   const user = await usersCollection.findOne({ _id: new ObjectId(userId) });
   if (!user) return;
 
   const allOrders = user.orders || [];
 
   // 🔹 ONLY MATCHED bets affect wallet and liability
-  // PENDING bets have NO financial impact until they become MATCHED
   const matchedOrders = allOrders.filter(o => o.status === "MATCHED");
 
   if (matchedOrders.length === 0) {
-    // No matched bets - reset liability and restore full wallet
-    // Calculate available balance from current state
     const currentWallet = user.wallet_balance || 0;
     const currentLiability = user.liable || 0;
-    const availableBalance = currentWallet + currentLiability; // Restore all locked funds
-    
+    const availableBalance = currentWallet + currentLiability;
+
     await usersCollection.updateOne(
       { _id: new ObjectId(userId) },
       { $set: { liable: 0, runnerPnL: {}, wallet_balance: availableBalance } }
@@ -1073,12 +1068,11 @@ async function recalculateUserLiableAndPnL(userId) {
     const teamPnL = {};
     for (const s of selections) teamPnL[s] = 0;
 
+    // Compute PnL per selection
     for (const bet of marketOrders) {
       const sel = String(bet.selectionId);
       const side = bet.side;
-      // For MATCHED bets, price is the executed price
       const price = Number(bet.price);
-      // For MATCHED bets, use matched size (should equal full size)
       const size = Number(bet.matched || bet.size);
 
       if (side === "B") {
@@ -1090,68 +1084,43 @@ async function recalculateUserLiableAndPnL(userId) {
       }
     }
 
+    // Compute market liability
     let marketLiability = 0;
 
-    // Calculate liability per runner first
-    const runnerLiabilities = {};
-    for (const [selectionId, pnl] of Object.entries(teamPnL)) {
-      if (pnl < 0) {
-        runnerLiabilities[selectionId] = Math.abs(pnl);
-      }
-    }
-
-    // 🩵 SINGLE-RUNNER MARKET: Sum all MATCHED bets (simple case)
     if (selections.length === 1) {
-      for (const b of marketOrders) {
-        // Only MATCHED bets are included here
-        const price = Number(b.price);
-        const size = Number(b.matched || b.size);
-        if (b.side === "B") {
-          marketLiability += size;
-        } else if (b.side === "L") {
-          marketLiability += (price - 1) * size;
-        }
+      // Single-runner market: sum all negative PnL
+      for (const pnl of Object.values(teamPnL)) {
+        if (pnl < 0) marketLiability += Math.abs(pnl);
       }
     } else {
-      // 🩵 MULTI-RUNNER MARKET: Use MAX liability among runners
-      // This handles the case where you have bets on multiple runners in the same market
-      // You only need to cover the worst-case scenario (one runner wins), not all scenarios
-      const liabilityValues = Object.values(runnerLiabilities);
+      // Multi-runner market: max liability across runners
+      const liabilityValues = Object.values(teamPnL)
+        .map(pnl => pnl < 0 ? Math.abs(pnl) : 0); // negative PnL = liability
       if (liabilityValues.length > 0) {
-        // Use the maximum liability among all runners
         marketLiability = Math.max(...liabilityValues);
       }
     }
 
     totalLiability += marketLiability;
 
+    // Accumulate runnerPnL
     for (const [k, v] of Object.entries(teamPnL)) {
       combinedRunnerPnL[k] = (combinedRunnerPnL[k] || 0) + v;
     }
   }
 
-  // 🔹 CRITICAL FIX: Calculate wallet balance from ALL transactions, not just current state
-  // We need to find the base wallet balance (before any bets) by looking at transactions
-  // OR we need to ensure we're reading the latest state correctly
-  
-  // Get the latest user state again to ensure we have the most recent wallet/liability
+  // 🔹 Compute wallet balance
   const latestUser = await usersCollection.findOne({ _id: new ObjectId(userId) });
   if (!latestUser) return;
-  
+
   const currentWallet = latestUser.wallet_balance || 0;
   const currentLiability = latestUser.liable || 0;
-  
-  // Calculate available balance: current wallet + current liability (locked funds)
-  // This gives us the total funds available before any bets
   const availableBalance = currentWallet + currentLiability;
-  
-  // Calculate new wallet: available balance minus new total liability
-  // This ensures we correctly accumulate across multiple bets
   const newWallet = Math.max(0, availableBalance - totalLiability);
-  
+
   console.log(`[Recalc] User ${userId}: currentWallet=${currentWallet}, currentLiability=${currentLiability}, availableBalance=${availableBalance}, totalLiability=${totalLiability}, newWallet=${newWallet}`);
 
-  // 🔹 Use atomic update to prevent race conditions
+  // 🔹 Atomic update
   await usersCollection.updateOne(
     { _id: new ObjectId(userId) },
     {
