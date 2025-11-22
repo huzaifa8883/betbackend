@@ -951,6 +951,138 @@ router.get('/inplay', async (req, res) => {
     });
   }
 });
+router.get('/Navigation', async (req, res) => {
+  const id = req.query.id || "0";
+  const type = parseInt(req.query.type || "0", 10);
+
+  try {
+    const token = await getSessionToken();
+
+    const headers = {
+      'X-Application': APP_KEY,
+      'X-Authentication': token,
+      'Content-Type': 'application/json'
+    };
+
+    let method = "";
+    let params = {};
+
+    if (type === 0 && id === "0") {
+      // 🟢 Step 1: Get all sports
+      method = "SportsAPING/v1.0/listEventTypes";
+      params = { filter: {} };
+
+    } else if (type === 0 && id !== "0") {
+      // 🟢 Step 2: Get competitions for a sport
+      method = "SportsAPING/v1.0/listCompetitions";
+      params = { filter: { eventTypeIds: [id] } };
+
+    } else if (type === 1) {
+      // 🟢 Step 3: Get events for a competition
+      method = "SportsAPING/v1.0/listEvents";
+      params = { filter: { competitionIds: [id] } };
+
+    } else if (type === 2) {
+      // 🟢 Step 4: Get markets for an event
+      method = "SportsAPING/v1.0/listMarketCatalogue";
+      params = {
+        filter: { eventIds: [id] },
+        maxResults: "100",
+        marketProjection: ["EVENT", "MARKET_START_TIME"]
+      };
+    } else {
+      return res.status(400).json({ status: 'error', message: 'Invalid type or id' });
+    }
+
+    // ✅ Betfair API Call
+    const bfRes = await axios.post(
+      'https://api.betfair.com/exchange/betting/json-rpc/v1',
+      [{
+        jsonrpc: "2.0",
+        method,
+        params,
+        id: 1
+      }],
+      { headers }
+    );
+
+    const data = bfRes.data[0]?.result || [];
+
+    // ✅ Map to required format
+    const mappedData = data.map(item => {
+      if (type === 0 && id === "0") {
+        // Sports
+        return {
+          id: item.eventType.id.toString(),
+          name: item.eventType.name,
+          type: 1,
+          startTime: null,
+          countryCode: null,
+          venue: null,
+          marketType: null,
+          numberOfWinners: null,
+          eventId: null,
+          parents: null
+        };
+      } else if (type === 0 && id !== "0") {
+        // Competitions
+        return {
+          id: item.competition.id.toString(),
+          name: item.competition.name,
+          type: 2,
+          startTime: null,
+          countryCode: null,
+          venue: null,
+          marketType: null,
+          numberOfWinners: null,
+          eventId: null,
+          parents: null
+        };
+      } else if (type === 1) {
+        // Events
+        return {
+          id: item.event.id.toString(),
+          name: item.event.name,
+          type: 3,
+          startTime: item.event.openDate || null,
+          countryCode: item.event.countryCode || null,
+          venue: item.event.venue || null,
+          marketType: null,
+          numberOfWinners: null,
+          eventId: null,
+          parents: null
+        };
+      } else if (type === 2) {
+        // Markets
+        return {
+          id: item.marketId,
+          name: item.marketName,
+          type: 4,
+          startTime: item.marketStartTime || null,
+          countryCode: null,
+          venue: null,
+          marketType: item.marketName || null,
+          numberOfWinners: item.numberOfWinners || null,
+          eventId: item.event?.id || null,
+          parents: null
+        };
+      }
+    });
+
+    res.json({
+      requestId: uuidv4(),
+      data: mappedData
+    });
+
+  } catch (err) {
+    console.error('❌ Error in GET /api/Navigation:', err.message);
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to fetch navigation data from Betfair',
+      details: err.response?.statusText || err.message
+    });
+  }
+});
 
 router.get('/live/football', async (req, res) => {
   try {
@@ -2435,7 +2567,7 @@ function getWinnerFromMarket(market) {
   return winner ? winner.selectionId : null;
 }
 
-const settledMarkets = new Set();
+const settledMarkets = new Set(); // memory-level tracking
 
 async function checkMarketStatusAndSettle(market) {
   if (market.status === "CLOSED" && !settledMarkets.has(market.marketId)) {
@@ -2450,25 +2582,28 @@ async function checkMarketStatusAndSettle(market) {
   }
 }
 
+
+// Example usage after fetching market data from Betfair
 async function updateMarkets() {
   const usersCollection = getUsersCollection();
 
+  // 1️⃣ Sab users fetch karo (sirf unke orders chahiye)
   const allUsers = await usersCollection.find({}, { projection: { orders: 1 } }).toArray();
 
+  // 2️⃣ Sab marketIds collect karo users ke orders se (both MATCHED and PENDING)
   const allMarketIds = [];
-  const marketSelectionMap = {};
-
+  const marketSelectionMap = {}; // Track marketId -> selectionIds for auto-matching
+  
   for (const user of allUsers) {
     if (!user.orders) continue;
-
     for (const order of user.orders) {
       if ((order.status === "MATCHED" || order.status === "PENDING") && order.marketId) {
         allMarketIds.push(order.marketId);
-
+        
+        // Track selections for auto-matching
         if (!marketSelectionMap[order.marketId]) {
           marketSelectionMap[order.marketId] = new Set();
         }
-
         if (order.selectionId) {
           marketSelectionMap[order.marketId].add(order.selectionId);
         }
@@ -2476,15 +2611,25 @@ async function updateMarkets() {
     }
   }
 
-  // FIXED: uniqueMarketIds defined
+  // 3️⃣ Unique marketIds nikalo
   const uniqueMarketIds = [...new Set(allMarketIds)];
 
+  if (uniqueMarketIds.length === 0) {
+    console.log("⚠️ No active markets found to update");
+    return;
+  }
+
+  console.log("🔄 Running updateMarkets check for:", uniqueMarketIds);
+
+  // 4️⃣ Betfair se in markets ka status lo
   const markets = await getMarketsFromBetfair(uniqueMarketIds);
 
+  // 5️⃣ Har market ke liye settlement check karo
   for (const market of markets) {
     await checkMarketStatusAndSettle(market);
   }
 
+  // 6️⃣ Auto-match pending bets for all active markets/selections
   for (const marketId of uniqueMarketIds) {
     const selections = marketSelectionMap[marketId] || new Set();
     for (const selectionId of selections) {
@@ -2498,6 +2643,8 @@ async function updateMarkets() {
 
   console.log("✅ updateMarkets executed for all active markets");
 }
+
+     
 
 
 module.exports  ={
