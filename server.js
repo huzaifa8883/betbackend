@@ -1,3 +1,4 @@
+// server.js
 require('dotenv').config();
 
 const express = require('express');
@@ -6,69 +7,84 @@ const cors = require('cors');
 const http = require('http');
 const bodyParser = require('body-parser');
 const config = require('./config');
-// const { settleBetsForClosedEvents } = require('./routes/Orders');
-const { updateMarkets } = require('./routes/markets');
+
+// Routes that we need (make sure these files export correctly)
+const userRoutes = require('./routes/users');
+const { router: marketRoutes } = require('./routes/markets');
+const { router: orderRoutes, autoMatchPendingBets } = require('./routes/Orders'); // Ensure Orders exports autoMatchPendingBets
+
+const { updateMarkets } = require('./routes/markets'); // if updateMarkets is exported separately
 
 const app = express();
 const server = http.createServer(app);
 
-// 🔥 Attach Socket.IO
-const { Server } = require("socket.io");
+// Socket.IO
+const { Server } = require('socket.io');
 const io = new Server(server, {
   cors: {
     origin: [
-      'https://bfexch.com',
-      'https://www.bfexch.com',
+      'https://nonalexch.com',
+      'https://www.nonalexch.com',
       'http://localhost:8000'
     ],
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    methods: ['GET', 'POST'],
     credentials: true
   }
 });
 
-// ✅ ab routes me bhi io use kar sakte ho
+// Make io available in routes if you need
 global.io = io;
 
-const PORT = process.env.PORT || config.api.port || 5000;
+const PORT = process.env.PORT || config.api?.port || 5000;
 
 /* ---------------- Middleware ---------------- */
+const allowedOrigins = [
+  'https://nonalexch.com',
+  'https://www.nonalexch.com',
+  'http://localhost:8000'
+];
+
 app.use(cors({
   origin: function (origin, callback) {
-    const allowedOrigins = [
-      'https://bfexch.com',
-      'https://www.bfexch.com',
-      'http://localhost:8000',
-    ];
-    if (!origin || allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      callback(new Error('CORS not allowed for this origin'));
+    // allow requests with no origin (mobile apps, curl, postman)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
     }
+    return callback(new Error('CORS not allowed for this origin'));
   },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true
 }));
 
+// bodyParser is still fine; express.json() could be used instead
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
 /* ---------------- MongoDB ---------------- */
-const MONGODB_URI = process.env.MONGODB_URI ||
-  'mongodb+srv://huzaifa:huzaifa56567@cluster0.owmq7.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0';
+// IMPORTANT: replace the default URI and remove hardcoded credentials.
+// Put your real URI in process.env.MONGODB_URI (and never commit it)
+const MONGODB_URI = process.env.MONGODB_URI || config.database?.uri || 
+  'mongodb+srv://<username>:<password>@cluster0.owmq7.mongodb.net/your-db?retryWrites=true&w=majority';
 
-mongoose.connect(MONGODB_URI)
-  .then(() => console.log('✅ MongoDB connected successfully'))
-  .catch(err => {
+async function connectDB() {
+  try {
+    await mongoose.connect(MONGODB_URI, {
+      // useNewUrlParser/useUnifiedTopology not required for Mongoose 6+
+      maxPoolSize: 10,
+      serverSelectionTimeoutMS: 5000
+    });
+    console.log('✅ MongoDB connected successfully');
+  } catch (err) {
     console.error('❌ MongoDB connection error:', err);
+    // don't exit immediately in dev; in production you might want to exit
     process.exit(1);
-  });
+  }
+}
+connectDB();
 
 /* ---------------- Routes ---------------- */
-const userRoutes = require('./routes/users');
-const {router:marketRoutes} = require('./routes/markets');
-const {router:orderRoutes} = require('./routes/Orders');
-
 app.use('/api/orders', orderRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/markets', marketRoutes);
@@ -77,36 +93,97 @@ app.use('/api/markets', marketRoutes);
 io.on("connection", (socket) => {
   console.log("⚡ Client connected:", socket.id);
 
-  // ✅ Join specific match room
   socket.on("JoinMatch", (matchId) => {
-    socket.join("match_" + matchId);
-    console.log(`✅ Client ${socket.id} joined match_${matchId}`);
+    try {
+      if (!matchId) return;
+      socket.join("match_" + matchId);
+      console.log(`✅ Client ${socket.id} joined match_${matchId}`);
+    } catch (e) {
+      console.error('JoinMatch error:', e);
+    }
   });
 
-  // ✅ Listen for bet placement
-  socket.on("placeBet", (bet) => {
-    console.log("📩 New Bet:", bet);
+  socket.on("placeBet", async (bet) => {
+    try {
+      if (!bet || !bet.marketId || !bet.selectionId) {
+        socket.emit("error", { message: "Invalid bet payload" });
+        return;
+      }
 
-    // TODO: Save bet in DB
+      console.log("📩 New Bet:", bet);
 
-    // Send confirmation to the user who placed bet
-    socket.emit("betConfirmed", {
-      ...bet,
-      status: "PENDING",
-      betId: Date.now().toString()
-    });
+      // TODO: Save bet properly in DB using your Orders route/service.
+      // For now we emit confirmation back to the placing socket:
+      const confirmation = {
+        ...bet,
+        status: "PENDING",
+        betId: Date.now().toString()
+      };
 
-    // Broadcast to everyone else (market updated)
-    socket.broadcast.emit("marketUpdated", {
-      marketId: bet.marketId,
-      odds: bet.odds
-    });
+      socket.emit("betConfirmed", confirmation);
+
+      // Broadcast market update to others
+      socket.broadcast.emit("marketUpdated", {
+        marketId: bet.marketId,
+        odds: bet.odds
+      });
+
+    } catch (err) {
+      console.error('placeBet handler error:', err);
+      socket.emit('error', { message: 'placeBet failed' });
+    }
   });
 
-  // ✅ Listen for market odds updates
-  socket.on("updateMarket", (data) => {
-    console.log("📢 Market update:", data);
-    io.emit("marketOddsUpdated", data); // send to all
+  socket.on("updateMarket", async (data) => {
+    try {
+      if (!data || !data.marketId) {
+        console.warn('updateMarket called without marketId:', data);
+        return;
+      }
+
+      console.log("📢 Market update:", data);
+      io.emit("marketOddsUpdated", data); // broadcast new odds to all
+
+      // Trigger auto-matching for pending bets when market odds update
+      try {
+        // If Orders.autoMatchPendingBets exists, use that
+        if (typeof autoMatchPendingBets === 'function') {
+          if (data.selectionId) {
+            await autoMatchPendingBets(data.marketId, data.selectionId);
+          } else {
+            // Auto-match for all selections present in the market
+            // We'll attempt to find unique selectionIds from DB (defensive)
+            if (mongoose.connection && mongoose.connection.readyState === 1) {
+              const usersCollection = mongoose.connection.db.collection(config.database.collections.users);
+              const users = await usersCollection.find({
+                "orders.marketId": data.marketId,
+                "orders.status": "PENDING"
+              }).toArray();
+
+              const uniqueSelections = [...new Set(
+                users.flatMap(u => (u.orders || [])
+                  .filter(o => o.marketId === data.marketId && o.status === "PENDING")
+                  .map(o => o.selectionId)
+                )
+              )];
+
+              for (const selId of uniqueSelections) {
+                await autoMatchPendingBets(data.marketId, selId);
+              }
+            } else {
+              console.warn('Mongo not ready for auto-matching');
+            }
+          }
+        } else {
+          console.warn('autoMatchPendingBets not available from Orders module');
+        }
+      } catch (err) {
+        console.error("❌ Auto-match error on market update:", err);
+      }
+
+    } catch (err) {
+      console.error('updateMarket handler error:', err);
+    }
   });
 
   socket.on("disconnect", () => {
@@ -139,24 +216,50 @@ app.get('/api/db-test', async (req, res) => {
     return res.status(500).json({ success: false, message: error.message });
   }
 });
-// Run market check every 30 seconds
-setInterval(async () => {
-  console.log("⏳ Running updateMarkets check...");
-  try {
-    await updateMarkets();
-    console.log("✅ updateMarkets executed");
-  } catch (err) {
-    console.error("❌ updateMarkets error:", err.message);
-  }
-}, 30000);
+
+/* ---------------- Periodic market update ---------------- */
+// Run market check every 30 seconds — ensure updateMarkets handles its own errors
+if (typeof updateMarkets === 'function') {
+  setInterval(async () => {
+    console.log("⏳ Running updateMarkets check...");
+    try {
+      await updateMarkets();
+      console.log("✅ updateMarkets executed");
+      // If updateMarkets triggers socket events or calls auto-match internally, great.
+    } catch (err) {
+      console.error("❌ updateMarkets error:", err?.message || err);
+    }
+  }, 30 * 1000);
+} else {
+  console.warn('updateMarkets function not found in ./routes/markets');
+}
 
 /* ---------------- Start server ---------------- */
 server.listen(PORT, () => {
   console.log('🚀 Backend server running on port ' + PORT);
-  console.log('Using database: ' + config.database.name);
+  try {
+    console.log('Using database: ' + (config.database?.name || mongoose.connection.db?.databaseName || 'unknown'));
+  } catch (e) { /* ignore */ }
 });
 
-// setInterval(() => {
-//   console.log("⏳ Running automatic settlement for closed events...");
-//   settleBetsForClosedEvents();
-// }, 5 * 60 * 1000); // 5 minutes
+/* ---------------- Graceful shutdown & errors ---------------- */
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled Rejection at:', reason);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught Exception thrown:', err);
+  // Optionally exit: process.exit(1);
+});
+
+function gracefulShutdown() {
+  console.log('🔌 Shutting down gracefully...');
+  server.close(() => {
+    mongoose.connection.close(false, () => {
+      console.log('Mongo connection closed.');
+      process.exit(0);
+    });
+  });
+}
+process.on('SIGINT', gracefulShutdown);
+process.on('SIGTERM', gracefulShutdown);
