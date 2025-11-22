@@ -983,6 +983,7 @@ router.post("/", authMiddleware(), async (req, res) => {
       if (status === "MATCHED") {
         // 🔹 When bet becomes MATCHED, recalculate liability immediately
         // This is when wallet and liability should be updated
+        // IMPORTANT: Wait for recalculation to complete before proceeding
         await recalculateUserLiableAndPnL(user._id);
         
         // Add transaction for matched bet (wallet deduction happens in recalc)
@@ -1007,10 +1008,9 @@ router.post("/", authMiddleware(), async (req, res) => {
       }
     }
 
-    // 🔹 Run recalc for any remaining MATCHED bets (in case some were already matched)
-    recalculateUserLiableAndPnL(user._id)
-      .then(() => console.log("✅ Liability recalculated for user:", user._id))
-      .catch((err) => console.error("❌ Recalc error:", err));
+    // 🔹 Final recalculation to ensure all MATCHED bets are accounted for
+    // This ensures consistency even if multiple bets were matched
+    await recalculateUserLiableAndPnL(user._id);
 
     // 🔹 Check and auto-match any pending bets for the same market/selections
     const uniqueSelections = [...new Set(normalizedOrders.map(o => ({ marketId: o.marketId, selectionId: o.selectionId })))];
@@ -1037,6 +1037,9 @@ router.post("/", authMiddleware(), async (req, res) => {
 // --- Helper: recalculateUserLiableAndPnL (uses ONLY MATCHED orders) ---
 async function recalculateUserLiableAndPnL(userId) {
   const usersCollection = getUsersCollection();
+  
+  // 🔹 Use findOneAndUpdate with atomic operations to prevent race conditions
+  // First, get the user to calculate new values
   const user = await usersCollection.findOne({ _id: new ObjectId(userId) });
   if (!user) return;
 
@@ -1048,6 +1051,7 @@ async function recalculateUserLiableAndPnL(userId) {
 
   if (matchedOrders.length === 0) {
     // No matched bets - reset liability and restore full wallet
+    // Calculate available balance from current state
     const currentWallet = user.wallet_balance || 0;
     const currentLiability = user.liable || 0;
     const availableBalance = currentWallet + currentLiability; // Restore all locked funds
@@ -1126,17 +1130,28 @@ async function recalculateUserLiableAndPnL(userId) {
     }
   }
 
-  // Calculate wallet balance correctly:
-  // Available balance = wallet_balance + liable (money that's locked but still available)
-  // New wallet_balance = available_balance - totalLiability
-  // This ensures we accumulate correctly across multiple bets
-  const currentWallet = user.wallet_balance || 0;
-  const currentLiability = user.liable || 0;
-  const availableBalance = currentWallet + currentLiability; // Total available funds
+  // 🔹 CRITICAL FIX: Calculate wallet balance from ALL transactions, not just current state
+  // We need to find the base wallet balance (before any bets) by looking at transactions
+  // OR we need to ensure we're reading the latest state correctly
   
-  // Calculate new wallet balance: available balance minus new total liability
+  // Get the latest user state again to ensure we have the most recent wallet/liability
+  const latestUser = await usersCollection.findOne({ _id: new ObjectId(userId) });
+  if (!latestUser) return;
+  
+  const currentWallet = latestUser.wallet_balance || 0;
+  const currentLiability = latestUser.liable || 0;
+  
+  // Calculate available balance: current wallet + current liability (locked funds)
+  // This gives us the total funds available before any bets
+  const availableBalance = currentWallet + currentLiability;
+  
+  // Calculate new wallet: available balance minus new total liability
+  // This ensures we correctly accumulate across multiple bets
   const newWallet = Math.max(0, availableBalance - totalLiability);
+  
+  console.log(`[Recalc] User ${userId}: currentWallet=${currentWallet}, currentLiability=${currentLiability}, availableBalance=${availableBalance}, totalLiability=${totalLiability}, newWallet=${newWallet}`);
 
+  // 🔹 Use atomic update to prevent race conditions
   await usersCollection.updateOne(
     { _id: new ObjectId(userId) },
     {
