@@ -1401,6 +1401,23 @@ function detectCategory(eventName) {
 
   return "Other"; // fallback
 }
+router.get("/transactions", authMiddleware(), async (req, res) => {
+  try {
+    const usersCollection = getUsersCollection();
+    const user = await usersCollection.findOne({ _id: new ObjectId(req.user._id) });
+    if (!user) return res.status(404).json({ error: "User not found" });
+
+    const deposits = (user.transactions || []).filter(
+      t => t.type === "deposit" && t.status === "completed"
+    );
+
+    res.json(deposits);
+  } catch (err) {
+    console.error("Error fetching deposit transactions:", err);
+    res.status(500).json({ error: "Failed to fetch transactions" });
+  }
+});
+
 // GET /orders/with-category
 router.get("/with-category", authMiddleware(), async (req, res) => {
   try {
