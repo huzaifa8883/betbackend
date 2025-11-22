@@ -1289,91 +1289,90 @@ router.post("/cancel/:requestId", authMiddleware(), async (req, res) => {
 
     const usersCollection = getUsersCollection();
     const user = await usersCollection.findOne({ _id: new ObjectId(userId) });
-
     if (!user) return res.status(404).json({ error: "User not found" });
 
-    const order = (user.orders || []).find(o => o.requestId == requestId);
+    // find the order (use loose equality to tolerate number/string)
+    const order = (user.orders || []).find(o => String(o.requestId) === String(requestId));
     if (!order) return res.status(404).json({ error: "Order not found" });
+
+    // Only PENDING bets are cancellable via this route
     if (order.status !== "PENDING") {
       return res.status(400).json({ error: "Only PENDING bets can be cancelled" });
     }
 
-    // 🔹 PENDING bets have no financial impact, so no refund needed
-    // Just mark the order as cancelled
+    // Mark the order as CANCELLED (arrayFilters to target the exact order)
     await usersCollection.updateOne(
       { _id: new ObjectId(userId) },
       {
         $set: { "orders.$[o].status": "CANCELLED", "orders.$[o].updated_at": new Date() },
         $push: {
           transactions: {
-            type: "BET_CANCELLED",
-            amount: 0, // No refund needed - PENDING bets don't affect wallet
-            orderId: requestId,
-            created_at: new Date()
+            $each: [{
+              type: "BET_CANCELLED",
+              amount: 0,
+              orderId: requestId,
+              created_at: new Date()
+            }]
           }
         }
       },
-      { arrayFilters: [{ "o.requestId": requestId }] }
+      { arrayFilters: [{ "o.requestId": { $eq: (typeof order.requestId === "number" ? Number(requestId) : requestId) } }] }
     );
 
-    // 🔹 No need to recalculate - PENDING bets don't affect liability
-    // Only MATCHED bets affect wallet/liability
+    // Emit socket update so frontend can refresh if listening
+    global.io.to("user_" + userId).emit("orderCancelled", { requestId });
 
-    res.json({ success: true, message: "Bet cancelled", orderId: requestId });
+    return res.json({ success: true, message: "Bet cancelled", orderId: requestId });
   } catch (err) {
     console.error("Cancel bet error:", err);
-    res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
   }
 });
 
-
-// ✅ Cancel all unmatched bets
+// Cancel all pending bets (for the authenticated user)
+// Note: This endpoint cancels only PENDING bets.
+// If you want to cancel by matchId or other filter, add query params and filter accordingly.
 router.post("/cancel-all", authMiddleware(), async (req, res) => {
   try {
     const userId = req.user._id;
-
     const usersCollection = getUsersCollection();
+
     const user = await usersCollection.findOne({ _id: new ObjectId(userId) });
     if (!user) return res.status(404).json({ error: "User not found" });
 
     const pendingOrders = (user.orders || []).filter(o => o.status === "PENDING");
     if (pendingOrders.length === 0) {
-      return res.json({ success: true, message: "No pending bets to cancel" });
+      return res.json({ success: true, message: "No pending bets to cancel", cancelledCount: 0 });
     }
 
-    // 🔹 Mark all pending orders as cancelled
-    // PENDING bets have no financial impact, so no refund needed
+    // Use arrayFilters to set all pending orders to CANCELLED
     await usersCollection.updateOne(
       { _id: new ObjectId(userId) },
       {
         $set: { "orders.$[o].status": "CANCELLED", "orders.$[o].updated_at": new Date() },
         $push: {
           transactions: {
-            type: "BET_CANCELLED_ALL",
-            amount: 0, // No refund needed - PENDING bets don't affect wallet
-            cancelledCount: pendingOrders.length,
-            created_at: new Date()
+            $each: [{
+              type: "BET_CANCELLED_ALL",
+              amount: 0,
+              cancelledCount: pendingOrders.length,
+              created_at: new Date()
+            }]
           }
         }
       },
       { arrayFilters: [{ "o.status": "PENDING" }] }
     );
 
-    // 🔹 No need to recalculate - PENDING bets don't affect liability
-    // Only MATCHED bets affect wallet/liability
+    // Emit socket update for user
+    global.io.to("user_" + userId).emit("ordersCancelledAll", { cancelledCount: pendingOrders.length });
 
-    const freshUser = await usersCollection.findOne({ _id: new ObjectId(userId) });
-    res.json({ 
-      success: true, 
-      message: "All pending bets cancelled",
-      cancelledCount: pendingOrders.length
-    });
+    return res.json({ success: true, message: "All pending bets cancelled", cancelledCount: pendingOrders.length });
   } catch (err) {
     console.error("Cancel all bets error:", err);
-    res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
   }
 });
-
 
 router.get("/all", authMiddleware(), async (req, res) => {
   const usersCollection = getUsersCollection();
