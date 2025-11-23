@@ -863,14 +863,10 @@ router.post("/", authMiddleware(), async (req, res) => {
     }
 
     const usersCollection = getUsersCollection();
+    
     // 1. Fetch latest user state strictly
     const dbUser = await usersCollection.findOne({ _id: new ObjectId(user._id) });
     if (!dbUser) return res.status(404).json({ error: "User not found" });
-
-    // 2. Basic Pre-computation (Check funds tentatively)
-    const walletBalance = dbUser.wallet_balance || 0;
-    const currentLiability = dbUser.liable || 0;
-    const totalFunds = walletBalance + currentLiability; // The invariant logic
 
     await Promise.all(
       orders.map(async (order) => {
@@ -880,12 +876,20 @@ router.post("/", authMiddleware(), async (req, res) => {
       })
     );
 
+    // 2. Normalize Orders & Calculate Required Liability
+    let totalRequiredLiability = 0;
+
     const normalizedOrders = orders.map((order) => {
       const price = parseFloat(order.price);
       const size = parseFloat(order.size);
-      // Tentative liability for database storage (informational only)
+      
+      // Calculate Liability for this bet
+      // BACK: Liability = Stake
+      // LAY: Liability = (Price - 1) * Stake
       const liable = order.side === "B" ? size : (price - 1) * size;
       
+      totalRequiredLiability += liable;
+
       return {
         ...order,
         price,
@@ -895,14 +899,29 @@ router.post("/", authMiddleware(), async (req, res) => {
         position: order.side === "B" ? "BACK" : "LAY",
         status: "PENDING",
         matched: 0,
-        requestId: Date.now() + Math.floor(Math.random() * 10000), // Increased random range
+        requestId: Date.now() + Math.floor(Math.random() * 100000),
         userId: user._id,
         created_at: new Date(),
         updated_at: new Date(),
       };
     });
 
-    // 3. Push Orders as PENDING first (No wallet impact yet)
+    // 3. Sufficient Funds Check
+    // Rule: Available = Wallet + Current Runner Profit (Positive PnL only)
+    const walletBalance = dbUser.wallet_balance || 0;
+    
+    // Calculate total positive profit from existing runnerPnL (if any)
+    const currentRunnerProfit = Object.values(dbUser.runnerPnL || {}).reduce((sum, val) => {
+      return val > 0 ? sum + val : sum;
+    }, 0);
+
+    const totalAvailable = walletBalance + currentRunnerProfit;
+
+    if (totalAvailable < totalRequiredLiability) {
+      return res.json({ error: "Insufficient funds" });
+    }
+
+    // 4. Push Orders as PENDING and DEDUCT BALANCE IMMEDIATELY
     await usersCollection.updateOne(
       { _id: new ObjectId(user._id) },
       {
@@ -910,15 +929,20 @@ router.post("/", authMiddleware(), async (req, res) => {
           orders: { $each: normalizedOrders },
           transactions: {
             type: "BET_PLACED",
-            amount: 0,
+            amount: totalRequiredLiability,
             status: "PENDING",
             created_at: new Date(),
           },
         },
+        // CRITICAL: Deduct from wallet, Add to Liability immediately
+        $inc: {
+            wallet_balance: -totalRequiredLiability,
+            liable: totalRequiredLiability
+        }
       }
     );
 
-    // 4. Match Logic
+    // 5. Match Logic
     let hasMatches = false;
     const matchedUpdates = [];
 
@@ -931,7 +955,6 @@ router.post("/", authMiddleware(), async (req, res) => {
       if (matchedSize > 0) {
         hasMatches = true;
         
-        // Prepare the DB update for this specific order
         matchedUpdates.push(
             usersCollection.updateOne(
             { _id: new ObjectId(user._id), "orders.requestId": order.requestId },
@@ -945,7 +968,7 @@ router.post("/", authMiddleware(), async (req, res) => {
               $push: {
                 transactions: {
                     type: "BET_MATCHED",
-                    amount: 0, // Money handling is done in recalculate
+                    amount: 0, 
                     orderId: order.requestId,
                     marketId: order.marketId,
                     created_at: new Date()
@@ -955,7 +978,6 @@ router.post("/", authMiddleware(), async (req, res) => {
           )
         );
 
-        // Real-time socket update
         global.io.to("match_" + order.marketId).emit("ordersUpdated", {
           userId: user._id,
           newOrders: [{ ...order, matched: matchedSize, status, price: executedPrice }],
@@ -963,16 +985,15 @@ router.post("/", authMiddleware(), async (req, res) => {
       }
     }
 
-    // Execute all match updates in parallel
     if (matchedUpdates.length > 0) {
         await Promise.all(matchedUpdates);
     }
 
-    // 5. CRITICAL: Recalculate ONLY ONCE after all updates are done
-    // This prevents the race condition and "reset" bug
+    // 6. Recalculate Logic
+    // This function has been updated to handle both PENDING (simple liability) and MATCHED (green book)
     const finalState = await recalculateUserLiableAndPnL(user._id);
 
-    // 6. Auto-match check (fire and forget)
+    // 7. Auto-match check (fire and forget)
     const uniqueSelections = [
       ...new Set(normalizedOrders.map((o) => ({ marketId: o.marketId, selectionId: o.selectionId }))),
     ];
@@ -985,8 +1006,8 @@ router.post("/", authMiddleware(), async (req, res) => {
     res.status(200).json({
       message: "Bet placed successfully",
       orders: normalizedOrders,
-      wallet: finalState ? finalState.wallet_balance : walletBalance,
-      liability: finalState ? finalState.liable : currentLiability
+      wallet: finalState ? finalState.wallet_balance : (walletBalance - totalRequiredLiability),
+      liability: finalState ? finalState.liable : (dbUser.liable + totalRequiredLiability)
     });
 
   } catch (err) {
@@ -995,47 +1016,38 @@ router.post("/", authMiddleware(), async (req, res) => {
   }
 });
 
-// --- FIXED Helper: recalculateUserLiableAndPnL ---
+/* ------------------- RECALCULATE LOGIC (UPDATED) ------------------- */
 async function recalculateUserLiableAndPnL(userId) {
   const usersCollection = getUsersCollection();
 
-  // 1. Fetch fresh user data to ensure we work with the absolute latest state
+  // 1. Fetch fresh user data
   const user = await usersCollection.findOne({ _id: new ObjectId(userId) });
   if (!user) return null;
 
   const allOrders = user.orders || [];
+  
+  // Separate orders
   const matchedOrders = allOrders.filter((o) => o.status === "MATCHED");
+  const pendingOrders = allOrders.filter((o) => o.status === "PENDING");
 
   // 2. Determine Total Funds Available (Invariant)
-  // Total Funds = Current Wallet + Current Liability
-  // We will redistribute this total into (New Wallet) and (New Liability)
+  // Total Funds = Current Wallet + Current Stored Liability
+  // This represents the total "Net Worth" of the user currently in the system (excluding realized PnL from settled bets which are already in wallet)
   const currentWallet = user.wallet_balance || 0;
   const currentStoredLiability = user.liable || 0;
   const totalFundsInvariant = currentWallet + currentStoredLiability;
 
-  if (matchedOrders.length === 0) {
-    // If no bets are active, Liability is 0, Wallet is Total Funds
-    await usersCollection.updateOne(
-      { _id: new ObjectId(userId) },
-      { $set: { liable: 0, runnerPnL: {}, wallet_balance: totalFundsInvariant } }
-    );
-    return { liable: 0, wallet_balance: totalFundsInvariant };
-  }
-
-  const markets = [...new Set(matchedOrders.map((o) => o.marketId))];
   let totalLiability = 0;
   const combinedRunnerPnL = {};
 
-  // 3. Market Liability Calculation Loop
+  // 3. Calculate Liability for MATCHED Bets (Complex Market Math)
+  const markets = [...new Set(matchedOrders.map((o) => o.marketId))];
+  
   for (const marketId of markets) {
     const marketOrders = matchedOrders.filter((o) => o.marketId === marketId);
     
-    // --- CORE FIX: Global PnL Algorithm ---
-    // We don't rely on 'selections' array for the loop. 
-    // We assume a 'Base Field PnL' and adjust specific runners.
-    
-    let globalPnL = 0; // This represents the PnL if a runner NOT in our bets wins (The Field)
-    const runnerAdjustments = {}; // Stores (Win PnL - Loss PnL) for specific runners
+    let globalPnL = 0; 
+    const runnerAdjustments = {};
 
     for (const bet of marketOrders) {
       const sel = String(bet.selectionId);
@@ -1043,61 +1055,58 @@ async function recalculateUserLiableAndPnL(userId) {
       const size = Number(bet.matched || bet.size);
 
       if (bet.side === "B") {
-        // BACK: If this wins, we get (Price-1)*Size. If it loses, we lose Size.
-        // Math: Decrease Global (Loss scenario), Increase specific runner (Win scenario)
         globalPnL -= size; 
         runnerAdjustments[sel] = (runnerAdjustments[sel] || 0) + (price * size);
       } else {
-        // LAY: If this wins, we lose (Price-1)*Size. If it loses, we win Size.
-        // Math: Increase Global (Win scenario), Decrease specific runner (Loss scenario)
         globalPnL += size;
         runnerAdjustments[sel] = (runnerAdjustments[sel] || 0) - (price * size);
       }
     }
 
-    // Calculate PnL for every outcome
-    // 1. The Field (Any runner we didn't bet on)
     const potentialPnLs = [globalPnL];
-
-    // 2. The runners we matched bets on
     for (const [sel, adjustment] of Object.entries(runnerAdjustments)) {
         const runnerFinalPnL = globalPnL + adjustment;
         potentialPnLs.push(runnerFinalPnL);
-        
-        // Update the Combined PnL for UI display
         combinedRunnerPnL[sel] = (combinedRunnerPnL[sel] || 0) + runnerFinalPnL;
     }
 
-    // Liability is the absolute value of the worst-case scenario (Min PnL)
-    // If Min PnL is positive (Green Book), liability is 0.
+    // Market Liability = Absolute value of worst loss
     const minPnL = Math.min(...potentialPnLs);
     const marketLiability = minPnL < 0 ? Math.abs(minPnL) : 0;
 
     totalLiability += marketLiability;
   }
 
-  // 4. Final Safety Check
-  // Ensure liability doesn't exceed total funds (sanity check, though logic shouldn't allow it)
-  // If liability > totalFunds, cap it (or handle error), but for now we recalculate wallet.
+  // 4. Calculate Liability for PENDING Bets (Simple Sum)
+  // Pending bets are strictly liabilities, they do not offer "Green Book" benefits yet
+  let pendingLiability = 0;
+  for (const bet of pendingOrders) {
+    const price = parseFloat(bet.price);
+    const size = parseFloat(bet.size);
+    // Back: Size, Lay: (Price-1)*Size
+    const liable = bet.side === "B" ? size : (price - 1) * size;
+    pendingLiability += liable;
+  }
+
+  // 5. Finalize Totals
+  const grandTotalLiability = totalLiability + pendingLiability;
   
-  const newWallet = Math.max(0, totalFundsInvariant - totalLiability);
+  // Recalculate Wallet based on Invariant: Wallet = TotalFunds - TotalLiability
+  const newWallet = Math.max(0, totalFundsInvariant - grandTotalLiability);
 
-  console.log(`[Recalc] User ${userId}: TotalFunds=${totalFundsInvariant}, NewLiab=${totalLiability}, NewWallet=${newWallet}`);
-
-  // 5. Atomic Database Update
+  // 6. Atomic Database Update
   await usersCollection.updateOne(
     { _id: new ObjectId(userId) },
     {
       $set: {
         wallet_balance: newWallet,
-        liable: totalLiability,
+        liable: grandTotalLiability,
         runnerPnL: combinedRunnerPnL,
       },
     }
   );
 
-  // 6. Emit updates
-  const freshData = { wallet_balance: newWallet, liable: totalLiability, runnerPnL: combinedRunnerPnL };
+  const freshData = { wallet_balance: newWallet, liable: grandTotalLiability, runnerPnL: combinedRunnerPnL };
   global.io.to("user_" + userId).emit("userUpdated", freshData);
   
   return freshData;
@@ -1291,47 +1300,58 @@ router.post("/cancel/:requestId", authMiddleware(), async (req, res) => {
     const user = await usersCollection.findOne({ _id: new ObjectId(userId) });
     if (!user) return res.status(404).json({ error: "User not found" });
 
-    // find the order (use loose equality to tolerate number/string)
     const order = (user.orders || []).find(o => String(o.requestId) === String(requestId));
     if (!order) return res.status(404).json({ error: "Order not found" });
 
-    // Only PENDING bets are cancellable via this route
     if (order.status !== "PENDING") {
       return res.status(400).json({ error: "Only PENDING bets can be cancelled" });
     }
 
-    // Mark the order as CANCELLED (arrayFilters to target the exact order)
+    // Calculate refund amount based on liability stored in the order
+    // Fallback calculation if 'liable' wasn't stored correctly
+    const price = parseFloat(order.price);
+    const size = parseFloat(order.size);
+    const liabilityToRefund = order.liable || (order.side === "B" ? size : (price - 1) * size);
+
+    // 1. Mark as CANCELLED
     await usersCollection.updateOne(
       { _id: new ObjectId(userId) },
       {
         $set: { "orders.$[o].status": "CANCELLED", "orders.$[o].updated_at": new Date() },
         $push: {
           transactions: {
-            $each: [{
-              type: "BET_CANCELLED",
-              amount: 0,
-              orderId: requestId,
-              created_at: new Date()
-            }]
+            type: "BET_CANCELLED",
+            amount: liabilityToRefund,
+            orderId: requestId,
+            created_at: new Date()
           }
+        },
+        // 2. Refund Wallet & Reverse Liability immediately
+        $inc: {
+            wallet_balance: liabilityToRefund,
+            liable: -liabilityToRefund
         }
       },
       { arrayFilters: [{ "o.requestId": { $eq: (typeof order.requestId === "number" ? Number(requestId) : requestId) } }] }
     );
 
-    // Emit socket update so frontend can refresh if listening
-    global.io.to("user_" + userId).emit("orderCancelled", { requestId });
+    // 3. Force Recalculate to ensure state consistency
+    const finalState = await recalculateUserLiableAndPnL(userId);
 
-    return res.json({ success: true, message: "Bet cancelled", orderId: requestId });
+    global.io.to("user_" + userId).emit("orderCancelled", { 
+        requestId, 
+        wallet: finalState.wallet_balance, 
+        liability: finalState.liable 
+    });
+
+    return res.json({ success: true, message: "Bet cancelled", wallet: finalState.wallet_balance });
   } catch (err) {
     console.error("Cancel bet error:", err);
     return res.status(500).json({ error: err.message });
   }
 });
 
-// Cancel all pending bets (for the authenticated user)
-// Note: This endpoint cancels only PENDING bets.
-// If you want to cancel by matchId or other filter, add query params and filter accordingly.
+/* --------------------- CANCEL ALL PENDING --------------------- */
 router.post("/cancel-all", authMiddleware(), async (req, res) => {
   try {
     const userId = req.user._id;
@@ -1345,27 +1365,43 @@ router.post("/cancel-all", authMiddleware(), async (req, res) => {
       return res.json({ success: true, message: "No pending bets to cancel", cancelledCount: 0 });
     }
 
-    // Use arrayFilters to set all pending orders to CANCELLED
+    // Calculate total liability to refund
+    let totalRefund = 0;
+    pendingOrders.forEach(o => {
+        const price = parseFloat(o.price);
+        const size = parseFloat(o.size);
+        const liab = o.liable || (o.side === "B" ? size : (price - 1) * size);
+        totalRefund += liab;
+    });
+
     await usersCollection.updateOne(
       { _id: new ObjectId(userId) },
       {
         $set: { "orders.$[o].status": "CANCELLED", "orders.$[o].updated_at": new Date() },
         $push: {
           transactions: {
-            $each: [{
-              type: "BET_CANCELLED_ALL",
-              amount: 0,
-              cancelledCount: pendingOrders.length,
-              created_at: new Date()
-            }]
+            type: "BET_CANCELLED_ALL",
+            amount: totalRefund,
+            cancelledCount: pendingOrders.length,
+            created_at: new Date()
           }
+        },
+        // Refund Total
+        $inc: {
+            wallet_balance: totalRefund,
+            liable: -totalRefund
         }
       },
       { arrayFilters: [{ "o.status": "PENDING" }] }
     );
 
-    // Emit socket update for user
-    global.io.to("user_" + userId).emit("ordersCancelledAll", { cancelledCount: pendingOrders.length });
+    // Recalculate to ensure consistency
+    const finalState = await recalculateUserLiableAndPnL(userId);
+
+    global.io.to("user_" + userId).emit("ordersCancelledAll", { 
+        cancelledCount: pendingOrders.length,
+        wallet: finalState.wallet_balance
+    });
 
     return res.json({ success: true, message: "All pending bets cancelled", cancelledCount: pendingOrders.length });
   } catch (err) {
