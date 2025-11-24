@@ -917,9 +917,10 @@ router.post("/", authMiddleware(), async (req, res) => {
 
     const totalAvailable = walletBalance + currentRunnerProfit;
 
-    if (totalAvailable < totalRequiredLiability) {
-      return res.json({ error: "Insufficient funds" });
-    }
+  if (totalAvailable < totalRequiredLiability) {
+  // ❌ Immediately return error if user tries to bet more than available funds
+  return res.status(400).json({ error: "Insufficient funds" });
+}
 
     // 4. Push Orders as PENDING and DEDUCT BALANCE IMMEDIATELY
     await usersCollection.updateOne(
