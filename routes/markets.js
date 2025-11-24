@@ -1499,6 +1499,11 @@ let horseCache = [];
 let lastUpdate = 0;
 const POLL_INTERVAL = 30000; // 30 seconds
 
+// Convert UTC time → Pakistan local time
+function toPakistanTime(utcDateString) {
+  return new Date(new Date(utcDateString).toLocaleString("en-US", { timeZone: "Asia/Karachi" }));
+}
+
 // Fetch events utility
 async function fetchEvents(eventTypeIds, countries) {
   const sessionToken = await getSessionToken();
@@ -1513,8 +1518,8 @@ async function fetchEvents(eventTypeIds, countries) {
             eventTypeIds,
             marketCountries: countries,
             marketStartTime: {
-              from: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(), // last 3h
-              to: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()    // next 24h
+              from: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(),
+              to: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
             }
           }
         },
@@ -1560,6 +1565,7 @@ async function fetchMarketCatalogue(eventIds) {
       }
     }
   );
+
   let markets = response.data[0]?.result || [];
   const seenMarketIds = new Set();
   markets = markets.filter(m => {
@@ -1567,6 +1573,7 @@ async function fetchMarketCatalogue(eventIds) {
     seenMarketIds.add(m.marketId);
     return true;
   });
+
   return markets;
 }
 
@@ -1606,6 +1613,7 @@ async function updateHorseCache() {
       lastUpdate = Date.now();
       return;
     }
+
     const eventIds = horseEvents.map(e => e.event.id);
     const marketCatalogue = await fetchMarketCatalogue(eventIds);
     if (!marketCatalogue.length) {
@@ -1613,33 +1621,49 @@ async function updateHorseCache() {
       lastUpdate = Date.now();
       return;
     }
+
     const marketIds = marketCatalogue.map(m => m.marketId);
     const marketBooks = await fetchMarketBooks(marketIds);
 
     let finalData = marketCatalogue.map(market => {
       const matchingBook = marketBooks.find(b => b.marketId === market.marketId);
       const event = horseEvents.find(e => e.event.id === market.event.id);
+
+      // Convert UTC → PKT
+      const pktTime = event?.event.openDate ? toPakistanTime(event.event.openDate) : null;
+
       return {
         marketId: market.marketId,
         match: event?.event.name || 'Unknown Event',
-        startTime: event?.event.openDate || 'N/A',
+        startTime: pktTime ? pktTime.toISOString() : 'N/A',
         marketStatus: matchingBook?.status || 'UNKNOWN',
         totalMatched: matchingBook?.totalMatched || 0,
         selections: market.runners.map(runner => {
           const runnerBook = matchingBook?.runners.find(b => b.selectionId === runner.selectionId);
           return {
             name: runner.runnerName,
-            back: runnerBook?.ex?.availableToBack?.slice(0,3).map(b => ({ price: b.price, size: b.size })) || [],
-            lay: runnerBook?.ex?.availableToLay?.slice(0,3).map(l => ({ price: l.price, size: l.size })) || []
+            back: runnerBook?.ex?.availableToBack?.slice(0,3) || [],
+            lay: runnerBook?.ex?.availableToLay?.slice(0,3) || []
           };
         })
       };
     });
 
-    // Sort and remove duplicates
+    // Filter: Only now → next 24 hours (Pakistan Time)
+    const nowPKT = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Karachi" }));
+    const next24 = new Date(nowPKT.getTime() + 24 * 60 * 60 * 1000);
+
+    finalData = finalData.filter(item => {
+      const t = new Date(item.startTime);
+      return t >= nowPKT && t <= next24;
+    });
+
+    // Sort by Pakistan time
     finalData.sort((a,b) => new Date(a.startTime) - new Date(b.startTime));
+
+    // Remove duplicates
     finalData = finalData.filter((item,index,self) =>
-      index === self.findIndex(t => t.match === item.match && new Date(t.startTime).getTime() === new Date(item.startTime).getTime())
+      index === self.findIndex(t => t.match === item.match && t.startTime === item.startTime)
     );
 
     horseCache = finalData;
