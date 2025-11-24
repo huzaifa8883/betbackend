@@ -2207,7 +2207,7 @@ async function fetchGreyhoundMarketCatalogue(eventIds) {
             eventIds,
             marketTypeCodes: ["WIN", "PLACE", "EACH_WAY"],
           },
-          maxResults: "500",
+          maxResults: "1000",
           marketProjection: ["EVENT", "RUNNER_METADATA", "MARKET_START_TIME"],
         },
         id: 2,
@@ -2264,7 +2264,7 @@ async function fetchGreyhoundMarketBooks(marketIds) {
 // Polling & update function
 async function updateGreyhoundDataCache() {
   try {
-    const events = await fetchGreyhoundEvents(["4339"], ["AU", "US", "FR"]);
+    const events = await fetchGreyhoundEvents(["4339"], ["AU", "US", "FR","GB","NZ","IE"]);
 
     if (!events.length) {
       greyhoundDataCache = [];
