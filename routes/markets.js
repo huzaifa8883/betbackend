@@ -2223,10 +2223,10 @@ async function fetchGreyhoundMarketCatalogue(eventIds) {
   );
 
   let markets = response.data[0]?.result || [];
-  const seenMarketIds = new Set();
+  const seenMarketIds_g = new Set();
   markets = markets.filter(m => {
-    if (seenMarketIds.has(m.marketId)) return false;
-    seenMarketIds.add(m.marketId);
+    if (seenMarketIds_g.has(m.marketId)) return false;
+    seenMarketIds_g.add(m.marketId);
     return true;
   });
 
