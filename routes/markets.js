@@ -2154,11 +2154,10 @@ let greyhoundCache = [];
 let lastGreyhoundUpdate = 0;
 const POLL_INTERVAL_g = 30000; // 30 seconds
 
-// Convert UTC → Pakistan Time (fixed)
+// Convert UTC → Pakistan Time
 function toPakistanTime_g(utcDateString) {
   const utcDate = new Date(utcDateString);
-  const pktTime = new Date(utcDate.getTime() + 5 * 60 * 60 * 1000);
-  return pktTime;
+  return new Date(utcDate.getTime() + 5 * 60 * 60 * 1000); // UTC+5
 }
 
 // Fetch events
@@ -2191,7 +2190,6 @@ async function fetchGreyhoundEvents(eventTypeIds, countries) {
       },
     }
   );
-
   return response.data[0]?.result || [];
 }
 
@@ -2225,10 +2223,11 @@ async function fetchGreyhoundMarketCatalogue(eventIds) {
   );
 
   let markets = response.data[0]?.result || [];
-  const seenMarketIds_g = new Set();
+  // Remove duplicate market IDs
+  const seenMarketIds = new Set();
   markets = markets.filter((m) => {
-    if (seenMarketIds_g.has(m.marketId)) return false;
-    seenMarketIds_g.add(m.marketId);
+    if (seenMarketIds.has(m.marketId)) return false;
+    seenMarketIds.add(m.marketId);
     return true;
   });
 
@@ -2266,7 +2265,7 @@ async function fetchGreyhoundMarketBooks(marketIds) {
 // Polling function
 async function updateGreyhoundCache() {
   try {
-    const greyhoundEvents = await fetchGreyhoundEvents(["4339"], ["AU", "US", "FR"]);
+    const greyhoundEvents = await fetchGreyhoundEvents(["4339"], ["AU", "US", "FR"]); // 4339 = Greyhound
 
     if (!greyhoundEvents.length) {
       greyhoundCache = [];
@@ -2314,9 +2313,18 @@ async function updateGreyhoundCache() {
       };
     });
 
+    // ✅ Remove duplicates based on match + startTime
+    const seenEvents = new Set();
+    finalData = finalData.filter((item) => {
+      const key = item.match + item.startTime;
+      if (seenEvents.has(key)) return false;
+      seenEvents.add(key);
+      return true;
+    });
+
+    // Filter next 24 hours in Pakistan time
     const nowPKT = new Date(new Date().getTime() + 5 * 60 * 60 * 1000);
     const next24 = new Date(nowPKT.getTime() + 24 * 60 * 60 * 1000);
-
     finalData = finalData.filter((item) => {
       const t = new Date(item.startTime);
       return t >= nowPKT && t <= next24;
