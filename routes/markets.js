@@ -1495,6 +1495,7 @@ router.get('/live/tennis', async (req, res) => {
   }
 });
 // Global cache for horse racing data
+// Global cache for horse racing data
 let horseCache = [];
 let lastUpdate = 0;
 const POLL_INTERVAL = 30000; // 30 seconds
@@ -1555,7 +1556,7 @@ async function fetchMarketCatalogue(eventIds) {
             marketTypeCodes: ["WIN", "PLACE", "EACH_WAY"],
           },
           maxResults: "500",
-          marketProjection: ["EVENT", "RUNNER_METADATA"],
+          marketProjection: ["EVENT", "RUNNER_METADATA", "MARKET_START_TIME"],
         },
         id: 2,
       },
@@ -1639,9 +1640,9 @@ async function updateHorseCache() {
       );
       const event = horseEvents.find((e) => e.event.id === market.event.id);
 
-      // ✅ Use marketStartTime instead of event.openDate
-      const pktTime =
-        market?.marketStartTime && toPakistanTime(market.marketStartTime);
+      // ✅ Use marketStartTime if exists, otherwise fallback to event.openDate
+      const startUTC = market.marketStartTime || event.event.openDate;
+      const pktTime = startUTC && toPakistanTime(startUTC);
 
       return {
         marketId: market.marketId,
