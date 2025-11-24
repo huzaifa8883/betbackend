@@ -1639,8 +1639,9 @@ async function updateHorseCache() {
       );
       const event = horseEvents.find((e) => e.event.id === market.event.id);
 
+      // ✅ Use marketStartTime instead of event.openDate
       const pktTime =
-        event?.event.openDate && toPakistanTime(event.event.openDate);
+        market?.marketStartTime && toPakistanTime(market.marketStartTime);
 
       return {
         marketId: market.marketId,
@@ -1677,9 +1678,6 @@ async function updateHorseCache() {
     // Sort by Pakistan time
     finalData.sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
 
-    // *** Duplicate filter removed — we keep all WIN, PLACE, EACH WAY markets ***
-    // (NO duplicate removal here)
-
     horseCache = finalData;
     lastUpdate = Date.now();
   } catch (err) {
@@ -1703,6 +1701,7 @@ router.route("/live/horse").get((req, res) => {
     lastUpdate: new Date(lastUpdate).toISOString(),
   });
 });
+
 
 const sportMap = {
   1: { name: "Soccer", image: "soccer.svg" },
