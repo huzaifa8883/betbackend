@@ -2175,7 +2175,7 @@ async function fetchGreyhoundEvents(eventTypeIds, countries) {
             marketCountries: countries,
             marketStartTime: {
               from: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(),
-              to: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+              to: new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString(), // next 48h
             },
           },
         },
@@ -2222,15 +2222,7 @@ async function fetchGreyhoundMarketCatalogue(eventIds) {
     }
   );
 
-  let markets = response.data[0]?.result || [];
-  const seenMarketIds_g = new Set();
-  markets = markets.filter(m => {
-    if (seenMarketIds_g.has(m.marketId)) return false;
-    seenMarketIds_g.add(m.marketId);
-    return true;
-  });
-
-  return markets;
+  return response.data[0]?.result || [];
 }
 
 // Fetch market books
@@ -2264,8 +2256,8 @@ async function fetchGreyhoundMarketBooks(marketIds) {
 // Polling function
 async function updateGreyhoundCache() {
   try {
-    // Countries where Greyhound races are active
-    const events = await fetchGreyhoundEvents(["4339"], ["AU", "NZ"]);
+    // Expanded countries list for more coverage
+    const events = await fetchGreyhoundEvents(["4339"], ["AU", "NZ", "GB", "IE"]);
 
     if (!events.length) {
       greyhoundCache = [];
@@ -2308,23 +2300,7 @@ async function updateGreyhoundCache() {
       };
     });
 
-    // Remove duplicates by match + marketId
-    const seen = new Set();
-    finalData = finalData.filter(item => {
-      const key = item.match + item.marketId;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-
-    // Filter next 24 hours
-    const nowPKT = new Date(Date.now() + 5 * 60 * 60 * 1000);
-    const next24 = new Date(nowPKT.getTime() + 24 * 60 * 60 * 1000);
-    finalData = finalData.filter(item => {
-      const t = new Date(item.startTime);
-      return t >= nowPKT && t <= next24;
-    });
-
+    // Sort by start time
     finalData.sort((a,b) => new Date(a.startTime) - new Date(b.startTime));
 
     greyhoundCache = finalData;
@@ -2347,6 +2323,7 @@ router.route("/live/greyhound").get((req,res) => {
     lastUpdate: new Date(lastUpdateGreyhound).toISOString()
   });
 });
+
 
 router.get('/live/:sport', async(req, res) => {
 const sportName = req.params.sport.toLowerCase();
