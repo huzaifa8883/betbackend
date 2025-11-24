@@ -2152,7 +2152,7 @@ router.get('/Navigation', async (req, res) => {
 // --- GLOBAL CACHE ---
 let greyhoundCache = [];
 let lastUpdateGreyhound = 0;
-const POLL_INTERVAL = 30000; // 30 seconds
+const POLL_INTERVAL_g = 30000; // 30 seconds
 
 // Convert UTC → Pakistan Time
 function toPakistanTime(utcDateString) {
