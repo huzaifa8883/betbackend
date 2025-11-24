@@ -4,9 +4,9 @@
  */
 
 const { v4: uuidv4 } = require('uuid');
-// const express = require('express');
-// const router = express.Router();
-// const mongoose = require('mongoose');
+const express = require('express');
+const router = express.Router();
+const mongoose = require('mongoose');
 // const config = require('../config');
 const axios = require('axios'); // Yeh neeche likha hua hai
 const { settleEventBets, autoMatchPendingBets } = require('./Orders'); // Import settleEventBets and autoMatchPendingBets functions
@@ -2150,12 +2150,12 @@ router.get('/Navigation', async (req, res) => {
 // Ab express.listen ki jagah server.listen
 
 // --- GLOBAL CACHE ---
-let greyhoundDataCache = [];
-let lastGreyhoundUpdate = 0;
-const GREYHOUND_POLL_INTERVAL = 30000; // 30 seconds
+let greyhoundCache = [];
+let lastUpdateGreyhound = 0;
+const POLL_INTERVAL = 30000; // 30 seconds
 
 // Convert UTC → Pakistan Time
-function convertToPakistanTime(utcDateString) {
+function toPakistanTime(utcDateString) {
   const utcDate = new Date(utcDateString);
   return new Date(utcDate.getTime() + 5 * 60 * 60 * 1000); // UTC+5
 }
@@ -2193,7 +2193,7 @@ async function fetchGreyhoundEvents(eventTypeIds, countries) {
   return response.data[0]?.result || [];
 }
 
-// Fetch Greyhound market catalogue
+// Fetch market catalogue
 async function fetchGreyhoundMarketCatalogue(eventIds) {
   const sessionToken = await getSessionToken();
   const response = await axios.post(
@@ -2207,7 +2207,7 @@ async function fetchGreyhoundMarketCatalogue(eventIds) {
             eventIds,
             marketTypeCodes: ["WIN", "PLACE", "EACH_WAY"],
           },
-          maxResults: "1000",
+          maxResults: "500",
           marketProjection: ["EVENT", "RUNNER_METADATA", "MARKET_START_TIME"],
         },
         id: 2,
@@ -2233,7 +2233,7 @@ async function fetchGreyhoundMarketCatalogue(eventIds) {
   return markets;
 }
 
-// Fetch Greyhound market books
+// Fetch market books
 async function fetchGreyhoundMarketBooks(marketIds) {
   const sessionToken = await getSessionToken();
   const response = await axios.post(
@@ -2261,22 +2261,24 @@ async function fetchGreyhoundMarketBooks(marketIds) {
   return response.data[0]?.result || [];
 }
 
-// Polling & update function
-async function updateGreyhoundDataCache() {
+// Polling function
+async function updateGreyhoundCache() {
   try {
+    // Countries where Greyhound races are active
     const events = await fetchGreyhoundEvents(["4339"], ["AU", "NZ"]);
 
     if (!events.length) {
-      greyhoundDataCache = [];
-      lastGreyhoundUpdate = Date.now();
+      greyhoundCache = [];
+      lastUpdateGreyhound = Date.now();
       return;
     }
 
     const eventIds = events.map(e => e.event.id);
     const marketCatalogue = await fetchGreyhoundMarketCatalogue(eventIds);
+
     if (!marketCatalogue.length) {
-      greyhoundDataCache = [];
-      lastGreyhoundUpdate = Date.now();
+      greyhoundCache = [];
+      lastUpdateGreyhound = Date.now();
       return;
     }
 
@@ -2287,11 +2289,11 @@ async function updateGreyhoundDataCache() {
       const book = marketBooks.find(b => b.marketId === market.marketId);
       const event = events.find(e => e.event.id === market.event.id);
       const startUTC = market.marketStartTime || event.event.openDate;
-      const pktTime = startUTC && convertToPakistanTime(startUTC);
+      const pktTime = startUTC && toPakistanTime(startUTC);
 
       return {
         marketId: market.marketId,
-        matchName: event?.event.name || "Unknown Event",
+        match: event?.event.name || "Unknown Event",
         startTime: pktTime ? pktTime.toISOString() : "N/A",
         marketStatus: book?.status || "UNKNOWN",
         totalMatched: book?.totalMatched || 0,
@@ -2306,10 +2308,10 @@ async function updateGreyhoundDataCache() {
       };
     });
 
-    // Remove duplicates by matchName + marketId
+    // Remove duplicates by match + marketId
     const seen = new Set();
     finalData = finalData.filter(item => {
-      const key = item.matchName + item.marketId;
+      const key = item.match + item.marketId;
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
@@ -2323,30 +2325,28 @@ async function updateGreyhoundDataCache() {
       return t >= nowPKT && t <= next24;
     });
 
-    // Sort by Pakistan time
     finalData.sort((a,b) => new Date(a.startTime) - new Date(b.startTime));
 
-    greyhoundDataCache = finalData;
-    lastGreyhoundUpdate = Date.now();
+    greyhoundCache = finalData;
+    lastUpdateGreyhound = Date.now();
   } catch(err) {
     console.error("❌ Greyhound API Poll Error:", err.response?.data || err.message);
   }
 }
 
 // Start polling immediately
-updateGreyhoundDataCache();
-setInterval(updateGreyhoundDataCache, GREYHOUND_POLL_INTERVAL);
+updateGreyhoundCache();
+setInterval(updateGreyhoundCache, POLL_INTERVAL_g);
 
 // API Route
 router.route("/live/greyhound").get((req,res) => {
   res.status(200).json({
     status: "success",
-    count: greyhoundDataCache.length,
-    data: greyhoundDataCache,
-    lastUpdate: new Date(lastGreyhoundUpdate).toISOString()
+    count: greyhoundCache.length,
+    data: greyhoundCache,
+    lastUpdate: new Date(lastUpdateGreyhound).toISOString()
   });
 });
-
 
 router.get('/live/:sport', async(req, res) => {
 const sportName = req.params.sport.toLowerCase();
