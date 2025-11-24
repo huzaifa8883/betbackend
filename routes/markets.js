@@ -2150,36 +2150,38 @@ router.get('/Navigation', async (req, res) => {
 // Ab express.listen ki jagah server.listen
 
 // --- GLOBAL CACHE ---
-let greyhoundCache = [];
+let greyhoundDataCache = [];
 let lastGreyhoundUpdate = 0;
-const POLL_INTERVAL_G = 30000; // 30 seconds
+const GREYHOUND_POLL_INTERVAL = 30000; // 30 seconds
 
 // Convert UTC → Pakistan Time
-function toPakistanTime(utcDateString) {
+function convertToPakistanTime(utcDateString) {
   const utcDate = new Date(utcDateString);
   return new Date(utcDate.getTime() + 5 * 60 * 60 * 1000); // UTC+5
 }
 
-// Fetch events
+// Fetch Greyhound events
 async function fetchGreyhoundEvents(eventTypeIds, countries) {
   const sessionToken = await getSessionToken();
   const response = await axios.post(
     "https://api.betfair.com/exchange/betting/json-rpc/v1",
-    [{
-      jsonrpc: "2.0",
-      method: "SportsAPING/v1.0/listEvents",
-      params: {
-        filter: {
-          eventTypeIds,
-          marketCountries: countries,
-          marketStartTime: {
-            from: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(),
-            to: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+    [
+      {
+        jsonrpc: "2.0",
+        method: "SportsAPING/v1.0/listEvents",
+        params: {
+          filter: {
+            eventTypeIds,
+            marketCountries: countries,
+            marketStartTime: {
+              from: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(),
+              to: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+            },
           },
         },
+        id: 1,
       },
-      id: 1,
-    }],
+    ],
     {
       headers: {
         "X-Application": APP_KEY,
@@ -2191,21 +2193,26 @@ async function fetchGreyhoundEvents(eventTypeIds, countries) {
   return response.data[0]?.result || [];
 }
 
-// Fetch market catalogue
+// Fetch Greyhound market catalogue
 async function fetchGreyhoundMarketCatalogue(eventIds) {
   const sessionToken = await getSessionToken();
   const response = await axios.post(
     "https://api.betfair.com/exchange/betting/json-rpc/v1",
-    [{
-      jsonrpc: "2.0",
-      method: "SportsAPING/v1.0/listMarketCatalogue",
-      params: {
-        filter: { eventIds, marketTypeCodes: ["WIN","PLACE","EACH_WAY"] },
-        maxResults: "500",
-        marketProjection: ["EVENT","RUNNER_METADATA","MARKET_START_TIME"],
+    [
+      {
+        jsonrpc: "2.0",
+        method: "SportsAPING/v1.0/listMarketCatalogue",
+        params: {
+          filter: {
+            eventIds,
+            marketTypeCodes: ["WIN", "PLACE", "EACH_WAY"],
+          },
+          maxResults: "500",
+          marketProjection: ["EVENT", "RUNNER_METADATA", "MARKET_START_TIME"],
+        },
+        id: 2,
       },
-      id: 2,
-    }],
+    ],
     {
       headers: {
         "X-Application": APP_KEY,
@@ -2217,25 +2224,31 @@ async function fetchGreyhoundMarketCatalogue(eventIds) {
 
   let markets = response.data[0]?.result || [];
   const seenMarketIds = new Set();
-  markets = markets.filter((m) => {
+  markets = markets.filter(m => {
     if (seenMarketIds.has(m.marketId)) return false;
     seenMarketIds.add(m.marketId);
     return true;
   });
+
   return markets;
 }
 
-// Fetch market books
+// Fetch Greyhound market books
 async function fetchGreyhoundMarketBooks(marketIds) {
   const sessionToken = await getSessionToken();
   const response = await axios.post(
     "https://api.betfair.com/exchange/betting/json-rpc/v1",
-    [{
-      jsonrpc: "2.0",
-      method: "SportsAPING/v1.0/listMarketBook",
-      params: { marketIds, priceProjection: { priceData: ["EX_BEST_OFFERS"] } },
-      id: 3,
-    }],
+    [
+      {
+        jsonrpc: "2.0",
+        method: "SportsAPING/v1.0/listMarketBook",
+        params: {
+          marketIds,
+          priceProjection: { priceData: ["EX_BEST_OFFERS"] },
+        },
+        id: 3,
+      },
+    ],
     {
       headers: {
         "X-Application": APP_KEY,
@@ -2244,16 +2257,17 @@ async function fetchGreyhoundMarketBooks(marketIds) {
       },
     }
   );
+
   return response.data[0]?.result || [];
 }
 
-// Polling function
-async function updateGreyhoundCache() {
+// Polling & update function
+async function updateGreyhoundDataCache() {
   try {
-    const events = await fetchGreyhoundEvents(["4339"], ["AU","US","FR"]);
+    const events = await fetchGreyhoundEvents(["4339"], ["AU", "US", "FR"]);
 
     if (!events.length) {
-      greyhoundCache = [];
+      greyhoundDataCache = [];
       lastGreyhoundUpdate = Date.now();
       return;
     }
@@ -2261,7 +2275,7 @@ async function updateGreyhoundCache() {
     const eventIds = events.map(e => e.event.id);
     const marketCatalogue = await fetchGreyhoundMarketCatalogue(eventIds);
     if (!marketCatalogue.length) {
-      greyhoundCache = [];
+      greyhoundDataCache = [];
       lastGreyhoundUpdate = Date.now();
       return;
     }
@@ -2273,11 +2287,11 @@ async function updateGreyhoundCache() {
       const book = marketBooks.find(b => b.marketId === market.marketId);
       const event = events.find(e => e.event.id === market.event.id);
       const startUTC = market.marketStartTime || event.event.openDate;
-      const pktTime = startUTC && toPakistanTime(startUTC);
+      const pktTime = startUTC && convertToPakistanTime(startUTC);
 
       return {
         marketId: market.marketId,
-        match: event?.event.name || "Unknown Event",
+        matchName: event?.event.name || "Unknown Event",
         startTime: pktTime ? pktTime.toISOString() : "N/A",
         marketStatus: book?.status || "UNKNOWN",
         totalMatched: book?.totalMatched || 0,
@@ -2285,33 +2299,34 @@ async function updateGreyhoundCache() {
           const runnerBook = book?.runners.find(b => b.selectionId === runner.selectionId);
           return {
             name: runner.runnerName,
-            back: runnerBook?.ex?.availableToBack?.slice(0,3) || [],
-            lay: runnerBook?.ex?.availableToLay?.slice(0,3) || [],
+            back: runnerBook?.ex?.availableToBack?.slice(0, 3) || [],
+            lay: runnerBook?.ex?.availableToLay?.slice(0, 3) || [],
           };
         }),
       };
     });
 
-    // Remove duplicates by match + marketId
+    // Remove duplicates by matchName + marketId
     const seen = new Set();
     finalData = finalData.filter(item => {
-      const key = item.match + item.marketId;
+      const key = item.matchName + item.marketId;
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
     });
 
     // Filter next 24 hours
-    const nowPKT = new Date(Date.now() + 5*60*60*1000);
-    const next24 = new Date(nowPKT.getTime() + 24*60*60*1000);
+    const nowPKT = new Date(Date.now() + 5 * 60 * 60 * 1000);
+    const next24 = new Date(nowPKT.getTime() + 24 * 60 * 60 * 1000);
     finalData = finalData.filter(item => {
       const t = new Date(item.startTime);
       return t >= nowPKT && t <= next24;
     });
 
+    // Sort by Pakistan time
     finalData.sort((a,b) => new Date(a.startTime) - new Date(b.startTime));
 
-    greyhoundCache = finalData;
+    greyhoundDataCache = finalData;
     lastGreyhoundUpdate = Date.now();
   } catch(err) {
     console.error("❌ Greyhound API Poll Error:", err.response?.data || err.message);
@@ -2319,15 +2334,15 @@ async function updateGreyhoundCache() {
 }
 
 // Start polling immediately
-updateGreyhoundCache();
-setInterval(updateGreyhoundCache, POLL_INTERVAL_G);
+updateGreyhoundDataCache();
+setInterval(updateGreyhoundDataCache, GREYHOUND_POLL_INTERVAL);
 
 // API Route
 router.route("/live/greyhound").get((req,res) => {
   res.status(200).json({
     status: "success",
-    count: greyhoundCache.length,
-    data: greyhoundCache,
+    count: greyhoundDataCache.length,
+    data: greyhoundDataCache,
     lastUpdate: new Date(lastGreyhoundUpdate).toISOString()
   });
 });
