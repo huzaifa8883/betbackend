@@ -1496,15 +1496,17 @@ router.get('/live/tennis', async (req, res) => {
 });
 // Global cache for horse racing data
 // Global cache for horse racing data
+// Global cache for horse racing data
 let horseCache = [];
 let lastUpdate = 0;
 const POLL_INTERVAL = 30000; // 30 seconds
 
-// Convert UTC → Pakistan Time
+// Convert UTC → Pakistan Time (fixed)
 function toPakistanTime(utcDateString) {
-  return new Date(
-    new Date(utcDateString).toLocaleString("en-US", { timeZone: "Asia/Karachi" })
-  );
+  const utcDate = new Date(utcDateString);
+  // Pakistan Standard Time = UTC +5
+  const pktTime = new Date(utcDate.getTime() + 5 * 60 * 60 * 1000);
+  return pktTime;
 }
 
 // Fetch events
@@ -1640,7 +1642,7 @@ async function updateHorseCache() {
       );
       const event = horseEvents.find((e) => e.event.id === market.event.id);
 
-      // ✅ Use marketStartTime if exists, otherwise fallback to event.openDate
+      // Use marketStartTime if exists, otherwise fallback to event.openDate
       const startUTC = market.marketStartTime || event.event.openDate;
       const pktTime = startUTC && toPakistanTime(startUTC);
 
@@ -1666,9 +1668,7 @@ async function updateHorseCache() {
     });
 
     // Pakistan time filtering (next 24 hours)
-    const nowPKT = new Date(
-      new Date().toLocaleString("en-US", { timeZone: "Asia/Karachi" })
-    );
+    const nowPKT = new Date(new Date().getTime() + 5 * 60 * 60 * 1000); // UTC+5
     const next24 = new Date(nowPKT.getTime() + 24 * 60 * 60 * 1000);
 
     finalData = finalData.filter((item) => {
@@ -1702,7 +1702,6 @@ router.route("/live/horse").get((req, res) => {
     lastUpdate: new Date(lastUpdate).toISOString(),
   });
 });
-
 
 const sportMap = {
   1: { name: "Soccer", image: "soccer.svg" },
