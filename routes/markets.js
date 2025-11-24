@@ -2152,12 +2152,11 @@ router.get('/Navigation', async (req, res) => {
 // --- GLOBAL CACHE ---
 let greyhoundCache = [];
 let lastGreyhoundUpdate = 0;
-const POLL_INTERVAL = 30000; // 30 seconds
+const POLL_INTERVAL_g = 30000; // 30 seconds
 
 // Convert UTC → Pakistan Time (fixed)
-function toPakistanTime(utcDateString) {
+function toPakistanTime_g(utcDateString) {
   const utcDate = new Date(utcDateString);
-  // Pakistan Standard Time = UTC +5
   const pktTime = new Date(utcDate.getTime() + 5 * 60 * 60 * 1000);
   return pktTime;
 }
@@ -2226,10 +2225,10 @@ async function fetchGreyhoundMarketCatalogue(eventIds) {
   );
 
   let markets = response.data[0]?.result || [];
-  const seenMarketIds = new Set();
+  const seenMarketIds_g = new Set();
   markets = markets.filter((m) => {
-    if (seenMarketIds.has(m.marketId)) return false;
-    seenMarketIds.add(m.marketId);
+    if (seenMarketIds_g.has(m.marketId)) return false;
+    seenMarketIds_g.add(m.marketId);
     return true;
   });
 
@@ -2267,7 +2266,7 @@ async function fetchGreyhoundMarketBooks(marketIds) {
 // Polling function
 async function updateGreyhoundCache() {
   try {
-    const greyhoundEvents = await fetchGreyhoundEvents(["4339"], ["AU", "US", "FR"]); // 8 = Greyhound
+    const greyhoundEvents = await fetchGreyhoundEvents(["4339"], ["AU", "US", "FR"]);
 
     if (!greyhoundEvents.length) {
       greyhoundCache = [];
@@ -2294,7 +2293,7 @@ async function updateGreyhoundCache() {
       const event = greyhoundEvents.find((e) => e.event.id === market.event.id);
 
       const startUTC = market.marketStartTime || event.event.openDate;
-      const pktTime = startUTC && toPakistanTime(startUTC);
+      const pktTime = startUTC && toPakistanTime_g(startUTC);
 
       return {
         marketId: market.marketId,
@@ -2336,7 +2335,7 @@ async function updateGreyhoundCache() {
 }
 
 // Start polling
-setInterval(updateGreyhoundCache, POLL_INTERVAL);
+setInterval(updateGreyhoundCache, POLL_INTERVAL_g);
 updateGreyhoundCache();
 
 // Route
@@ -2348,7 +2347,6 @@ router.route("/live/greyhound").get((req, res) => {
     lastUpdate: new Date(lastGreyhoundUpdate).toISOString(),
   });
 });
-
 
 
 router.get('/live/:sport', async(req, res) => {
