@@ -327,7 +327,7 @@ router.get('/live/cricket', async (req, res) => {
   try {
     const sessionToken = await getSessionToken();
 
-    // 🎯 Step 1: Get cricket events
+    // STEP 1: Get Cricket Events
     const eventsResponse = await axios.post(
       'https://api.betfair.com/exchange/betting/json-rpc/v1',
       [
@@ -336,10 +336,7 @@ router.get('/live/cricket', async (req, res) => {
           method: 'SportsAPING/v1.0/listEvents',
           params: {
             filter: {
-              eventTypeIds: ['4'],
-              // marketStartTime: {
-              //   from: new Date().toISOString()
-              // }
+              eventTypeIds: ['4']
             }
           },
           id: 1
@@ -355,15 +352,13 @@ router.get('/live/cricket', async (req, res) => {
     );
 
     const events = eventsResponse.data[0]?.result || [];
-    
-    // Safety check: Agar events khali hain to yehi ruk jao
-    if (!events.length) {
-       return res.status(200).json({ status: 'success', data: [] });
+    if (events.length === 0) {
+      return res.status(200).json({ status: 'success', data: [] });
     }
 
     const eventIds = events.map(e => e.event.id);
 
-    // 🎯 Step 2: Get market catalogue (YAHAN CHANGE KIYA HAI)
+    // STEP 2: Get Market Catalogue (Match Odds, Bookmaker, Toss)
     const marketCatalogueResponse = await axios.post(
       'https://api.betfair.com/exchange/betting/json-rpc/v1',
       [
@@ -373,11 +368,10 @@ router.get('/live/cricket', async (req, res) => {
           params: {
             filter: {
               eventIds: eventIds,
-              // Yahan Toss aur Bookmaker add kar diya hai
               marketTypeCodes: ['MATCH_ODDS', 'TO_WIN_THE_TOSS', 'BOOKMAKER']
             },
-            maxResults: '10', // Limit badha di taaki saare markets aa sakein
-            marketProjection: ['EVENT', 'RUNNER_METADATA', 'MARKET_DESCRIPTION'] // Description add kiya type check karne ke liye
+            maxResults: '200',
+            marketProjection: ['EVENT', 'RUNNER_METADATA', 'MARKET_DESCRIPTION']
           },
           id: 2
         }
@@ -394,43 +388,45 @@ router.get('/live/cricket', async (req, res) => {
     const marketCatalogues = marketCatalogueResponse.data[0]?.result || [];
     const marketIds = marketCatalogues.map(m => m.marketId);
 
-    // 🎯 Step 3: Get market books (odds + volume)
+    // STEP 3: Get Market Books (Odds)
     let marketBooks = [];
     if (marketIds.length > 0) {
-        const marketBookResponse = await axios.post(
-          'https://api.betfair.com/exchange/betting/json-rpc/v1',
-          [
-            {
-              jsonrpc: '2.0',
-              method: 'SportsAPING/v1.0/listMarketBook',
-              params: {
-                marketIds: marketIds,
-                priceProjection: {
-                  priceData: ['EX_BEST_OFFERS']
-                }
-              },
-              id: 3
-            }
-          ],
+      const marketBookResponse = await axios.post(
+        'https://api.betfair.com/exchange/betting/json-rpc/v1',
+        [
           {
-            headers: {
-              'X-Application': APP_KEY,
-              'X-Authentication': sessionToken,
-              'Content-Type': 'application/json'
-            }
+            jsonrpc: '2.0',
+            method: 'SportsAPING/v1.0/listMarketBook',
+            params: {
+              marketIds: marketIds,
+              priceProjection: {
+                priceData: ['EX_BEST_OFFERS']
+              }
+            },
+            id: 3
           }
-        );
-        marketBooks = marketBookResponse.data[0]?.result || [];
+        ],
+        {
+          headers: {
+            'X-Application': APP_KEY,
+            'X-Authentication': sessionToken,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+      marketBooks = marketBookResponse.data[0]?.result || [];
     }
 
-    // 🔄 Combine data
+    // STEP 4: Merge Everything
     const finalData = marketCatalogues.map(market => {
+      const event = events.find(e => e.event.id === market.event.id);
       const matchingBook = marketBooks.find(b => b.marketId === market.marketId);
-      // Safety: Event kabhi kabhi null ho sakta hai agar projection miss ho, isliye ?. use kiya
-      const event = events.find(e => e.event.id === market.event?.id);
 
       const selections = market.runners.map(runner => {
-        const runnerBook = matchingBook?.runners.find(r => r.selectionId === runner.selectionId);
+        const runnerBook = matchingBook?.runners.find(
+          r => r.selectionId === runner.selectionId
+        );
+
         return {
           name: runner.runnerName,
           back: runnerBook?.ex?.availableToBack?.[0] || { price: '-', size: '-' },
@@ -438,30 +434,14 @@ router.get('/live/cricket', async (req, res) => {
         };
       });
 
-      // 🧠 Logic Update:
-      // Match Odds mein 3 runners hote hain (1, X, 2)
-      // Toss mein sirf 2 runners hote hain (Team A, Team B)
-      // Isliye neeche conditional logic lagayi hai taaki data kharab na dikhe
-
-      const odds = {
-        // Runner 1 (Team A)
-        back1: selections[0]?.back || { price: '-', size: '-' },
-        lay1: selections[0]?.lay || { price: '-', size: '-' },
-        
-        // Runner 2 (Draw / Team B depending on market)
-        backX: selections[1]?.back || { price: '-', size: '-' },
-        layX: selections[1]?.lay || { price: '-', size: '-' },
-        
-        // Runner 3 (Team B - sirf Match Odds mein hota hai usually)
-        back2: selections[2]?.back || { price: '-', size: '-' },
-        lay2: selections[2]?.lay || { price: '-', size: '-' }
-      };
+      // 🎯 Dynamic odds (jitne runners honge utne)
+      const odds = selections;
 
       return {
         marketId: market.marketId,
         match: event?.event.name || 'Unknown',
-        marketName: market.marketName, // E.g. Match Odds / Toss
-        marketType: market.description?.marketType, // E.g. MATCH_ODDS / TO_WIN_THE_TOSS
+        marketName: market.marketName,
+        marketType: market.description?.marketType,
         startTime: event?.event.openDate || '',
         marketStatus: matchingBook?.status || 'UNKNOWN',
         totalMatched: matchingBook?.totalMatched || 0,
@@ -483,6 +463,7 @@ router.get('/live/cricket', async (req, res) => {
     });
   }
 });
+
 router.get("/inplay/soccer", async (req, res) => {
   try {
     const sportId = 1;
