@@ -287,14 +287,12 @@ async function getMarketsFromBetfair(marketIds = []) {
 // 🎯 Fetch live cricket markets only
 router.get('/live/cricket', async (req, res) => {
   try {
-    // Step 1: Get Cricket Events
     const events = await betfairRpc("SportsAPING/v1.0/listEvents", {
       filter: { eventTypeIds: ["4"] }
     });
 
     const eventIds = events.map(e => e.event.id);
 
-    // Step 2: Market Types
     const marketTypes = ["MATCH_ODDS", "BOOKMAKER", "TOSS_WINNER"];
 
     const marketCatalogues = await betfairRpc(
@@ -311,7 +309,6 @@ router.get('/live/cricket', async (req, res) => {
 
     const marketIds = marketCatalogues.map(m => m.marketId);
 
-    // Step 3: Market Books
     const marketBooks = await betfairRpc(
       "SportsAPING/v1.0/listMarketBook",
       {
@@ -320,35 +317,43 @@ router.get('/live/cricket', async (req, res) => {
       }
     );
 
-    // Step 4: Final merged data
-    const finalData = marketCatalogues.map(market => {
-      const event = events.find(e => e.event.id === market.event.id);
-      const book = marketBooks.find(b => b.marketId === market.marketId);
+    const finalData = marketCatalogues
+      .map(market => {
+        const event = events.find(e => e.event.id === market.event.id);
 
-      const selections = market.runners.map(r => {
-        const rb = book?.runners?.find(rr => rr.selectionId === r.selectionId);
+        // SAFE BOOK
+        const book = marketBooks.find(b => b.marketId === market.marketId);
+
+        // Agar MarketBook missing ho → skip this market
+        if (!book || !book.runners) {
+          return null;
+        }
+
+        const selections = market.runners.map(r => {
+          const rb = book.runners.find(rr => rr.selectionId === r.selectionId);
+
+          return {
+            name: r.runnerName,
+            back: rb?.ex?.availableToBack?.[0] || { price: "-", size: "-" },
+            lay: rb?.ex?.availableToLay?.[0] || { price: "-", size: "-" },
+          };
+        });
 
         return {
-          name: r.runnerName,
-          back: rb?.ex?.availableToBack?.[0] || { price: "-", size: "-" },
-          lay: rb?.ex?.availableToLay?.[0] || { price: "-", size: "-" },
+          marketId: market.marketId,
+          match: event?.event.name || "Unknown",
+          marketType: market.description.marketType,
+          startTime: event?.event.openDate || "",
+          marketStatus: book.status || "UNKNOWN",
+          totalMatched: book.totalMatched || 0,
+          selections,
         };
-      });
-
-      return {
-        marketId: market.marketId,
-        match: event?.event.name,
-        marketType: market.description.marketType, // MATCH_ODDS / BOOKMAKER / TOSS_WINNER
-        startTime: event?.event.openDate || "",
-        marketStatus: book?.status || "UNKNOWN",
-        totalMatched: book?.totalMatched || 0,
-        selections
-      };
-    });
+      })
+      .filter(Boolean); // null markets remove
 
     res.status(200).json({
       status: "success",
-      data: finalData
+      data: finalData,
     });
 
   } catch (err) {
@@ -356,11 +361,10 @@ router.get('/live/cricket', async (req, res) => {
     res.status(500).json({
       status: "error",
       message: "Failed to fetch cricket data",
-      error: err.message
+      error: err.message,
     });
   }
 });
-
 
 async function betfairRpc(method, params) {
   const sessionToken = await getSessionToken();
@@ -384,7 +388,6 @@ async function betfairRpc(method, params) {
   );
   return res.data[0].result;
 }
-
 router.get("/inplay/soccer", async (req, res) => {
   try {
     const sportId = 1;
