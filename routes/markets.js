@@ -355,9 +355,15 @@ router.get('/live/cricket', async (req, res) => {
     );
 
     const events = eventsResponse.data[0]?.result || [];
+    
+    // Safety check: Agar events khali hain to yehi ruk jao
+    if (!events.length) {
+       return res.status(200).json({ status: 'success', data: [] });
+    }
+
     const eventIds = events.map(e => e.event.id);
 
-    // 🎯 Step 2: Get market catalogue
+    // 🎯 Step 2: Get market catalogue (YAHAN CHANGE KIYA HAI)
     const marketCatalogueResponse = await axios.post(
       'https://api.betfair.com/exchange/betting/json-rpc/v1',
       [
@@ -367,10 +373,11 @@ router.get('/live/cricket', async (req, res) => {
           params: {
             filter: {
               eventIds: eventIds,
-              marketTypeCodes: ['MATCH_ODDS']
+              // Yahan Toss aur Bookmaker add kar diya hai
+              marketTypeCodes: ['MATCH_ODDS', 'TO_WIN_THE_TOSS', 'BOOKMAKER']
             },
-            maxResults: '10',
-            marketProjection: ['EVENT', 'RUNNER_METADATA']
+            maxResults: '10', // Limit badha di taaki saare markets aa sakein
+            marketProjection: ['EVENT', 'RUNNER_METADATA', 'MARKET_DESCRIPTION'] // Description add kiya type check karne ke liye
           },
           id: 2
         }
@@ -388,70 +395,79 @@ router.get('/live/cricket', async (req, res) => {
     const marketIds = marketCatalogues.map(m => m.marketId);
 
     // 🎯 Step 3: Get market books (odds + volume)
-    const marketBookResponse = await axios.post(
-      'https://api.betfair.com/exchange/betting/json-rpc/v1',
-      [
-        {
-          jsonrpc: '2.0',
-          method: 'SportsAPING/v1.0/listMarketBook',
-          params: {
-            marketIds: marketIds,
-            priceProjection: {
-              priceData: ['EX_BEST_OFFERS']
+    let marketBooks = [];
+    if (marketIds.length > 0) {
+        const marketBookResponse = await axios.post(
+          'https://api.betfair.com/exchange/betting/json-rpc/v1',
+          [
+            {
+              jsonrpc: '2.0',
+              method: 'SportsAPING/v1.0/listMarketBook',
+              params: {
+                marketIds: marketIds,
+                priceProjection: {
+                  priceData: ['EX_BEST_OFFERS']
+                }
+              },
+              id: 3
             }
-          },
-          id: 3
-        }
-      ],
-      {
-        headers: {
-          'X-Application': APP_KEY,
-          'X-Authentication': sessionToken,
-          'Content-Type': 'application/json'
-        }
-      }
-    );
-
-    const marketBooks = marketBookResponse.data[0]?.result || [];
+          ],
+          {
+            headers: {
+              'X-Application': APP_KEY,
+              'X-Authentication': sessionToken,
+              'Content-Type': 'application/json'
+            }
+          }
+        );
+        marketBooks = marketBookResponse.data[0]?.result || [];
+    }
 
     // 🔄 Combine data
-    // 🔄 Combine data
-const finalData = marketCatalogues.map(market => {
-  const matchingBook = marketBooks.find(b => b.marketId === market.marketId);
-  const event = events.find(e => e.event.id === market.event.id);
+    const finalData = marketCatalogues.map(market => {
+      const matchingBook = marketBooks.find(b => b.marketId === market.marketId);
+      // Safety: Event kabhi kabhi null ho sakta hai agar projection miss ho, isliye ?. use kiya
+      const event = events.find(e => e.event.id === market.event?.id);
 
-  const selections = market.runners.map(runner => {
-    const runnerBook = matchingBook?.runners.find(r => r.selectionId === runner.selectionId);
-    return {
-      name: runner.runnerName,
-      back: runnerBook?.ex?.availableToBack?.[0] || { price: '-', size: '-' },
-      lay: runnerBook?.ex?.availableToLay?.[0] || { price: '-', size: '-' }
-    };
-  });
+      const selections = market.runners.map(runner => {
+        const runnerBook = matchingBook?.runners.find(r => r.selectionId === runner.selectionId);
+        return {
+          name: runner.runnerName,
+          back: runnerBook?.ex?.availableToBack?.[0] || { price: '-', size: '-' },
+          lay: runnerBook?.ex?.availableToLay?.[0] || { price: '-', size: '-' }
+        };
+      });
 
-  // 🧠 Assume:
-  // selections[0] = team 1
-  // selections[1] = X (draw) — only in soccer
-  // selections[2] = team 2
+      // 🧠 Logic Update:
+      // Match Odds mein 3 runners hote hain (1, X, 2)
+      // Toss mein sirf 2 runners hote hain (Team A, Team B)
+      // Isliye neeche conditional logic lagayi hai taaki data kharab na dikhe
 
-  const odds = {
-    back1: selections[0]?.back || { price: '-', size: '-' },
-    lay1: selections[0]?.lay || { price: '-', size: '-' },
-    backX: selections[1]?.back || { price: '-', size: '-' },
-    layX: selections[1]?.lay || { price: '-', size: '-' },
-    back2: selections[2]?.back || { price: '-', size: '-' },
-    lay2: selections[2]?.lay || { price: '-', size: '-' }
-  };
+      const odds = {
+        // Runner 1 (Team A)
+        back1: selections[0]?.back || { price: '-', size: '-' },
+        lay1: selections[0]?.lay || { price: '-', size: '-' },
+        
+        // Runner 2 (Draw / Team B depending on market)
+        backX: selections[1]?.back || { price: '-', size: '-' },
+        layX: selections[1]?.lay || { price: '-', size: '-' },
+        
+        // Runner 3 (Team B - sirf Match Odds mein hota hai usually)
+        back2: selections[2]?.back || { price: '-', size: '-' },
+        lay2: selections[2]?.lay || { price: '-', size: '-' }
+      };
 
-  return {
-    marketId: market.marketId,
-    match: event?.event.name || 'Unknown',
-    startTime: event?.event.openDate || '',
-    marketStatus: matchingBook?.status || 'UNKNOWN',
-    totalMatched: matchingBook?.totalMatched || 0,
-    odds
-  };
-});
+      return {
+        marketId: market.marketId,
+        match: event?.event.name || 'Unknown',
+        marketName: market.marketName, // E.g. Match Odds / Toss
+        marketType: market.description?.marketType, // E.g. MATCH_ODDS / TO_WIN_THE_TOSS
+        startTime: event?.event.openDate || '',
+        marketStatus: matchingBook?.status || 'UNKNOWN',
+        totalMatched: matchingBook?.totalMatched || 0,
+        odds
+      };
+    });
 
     res.status(200).json({
       status: 'success',
