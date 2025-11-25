@@ -285,109 +285,159 @@ async function getMarketsFromBetfair(marketIds = []) {
   }
 }
 // 🎯 Fetch live cricket markets only
+async function betfairRpc(method, params) {
+  try {
+    const sessionToken = await getSessionToken(); // Ensure this function exists in your scope
+    const response = await axios.post(
+      'https://api.betfair.com/exchange/betting/json-rpc/v1',
+      [
+        {
+          jsonrpc: '2.0',
+          method: method,
+          params: params,
+          id: 1
+        }
+      ],
+      {
+        headers: {
+          'X-Application': APP_KEY, // Ensure APP_KEY is available
+          'X-Authentication': sessionToken,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    const result = response.data[0]?.result;
+    const error = response.data[0]?.error;
+
+    if (error) {
+      console.warn(`⚠️ RPC Error [${method}]:`, error);
+      return null;
+    }
+    return result;
+
+  } catch (err) {
+    console.error(`❌ Network Error [${method}]:`, err.message);
+    return null;
+  }
+}
+
+// 🏏 Main Route: Live Cricket Data
 router.get('/live/cricket', async (req, res) => {
   try {
-    const events = await betfairRpc("SportsAPING/v1.0/listEvents", {
-      filter: { eventTypeIds: ["4"] }
+    // 🎯 Step 1: Get Active Cricket Events
+    // EventTypeId 4 = Cricket
+    const eventsResult = await betfairRpc('SportsAPING/v1.0/listEvents', {
+      filter: {
+        eventTypeIds: ['4'],
+        // Optional: Filter by time to get only current/future matches
+        marketStartTime: {
+            from: new Date().toISOString()
+        }
+      }
     });
+
+    const events = eventsResult || [];
+    if (events.length === 0) {
+      return res.status(200).json({ status: 'success', message: 'No active cricket events found', data: [] });
+    }
 
     const eventIds = events.map(e => e.event.id);
 
-    const marketTypes = ["MATCH_ODDS", "BOOKMAKER", "TOSS_WINNER"];
+    // 🎯 Step 2: Get Market Catalogues (MATCH_ODDS, BOOKMAKER, TOSS)
+    // We request specific market types for the events found above
+    const cataloguesResult = await betfairRpc('SportsAPING/v1.0/listMarketCatalogue', {
+      filter: {
+        eventIds: eventIds,
+        marketTypeCodes: ['MATCH_ODDS', 'BOOKMAKER', 'TOSS'] // TOSS usually implies Toss Winner
+      },
+      maxResults: '100', // Ensure we get enough markets
+      marketProjection: ['MARKET_START_TIME', 'RUNNER_METADATA', 'MARKET_DESCRIPTION']
+    });
 
-    const marketCatalogues = await betfairRpc(
-      "SportsAPING/v1.0/listMarketCatalogue",
-      {
-        filter: {
-          eventIds,
-          marketTypeCodes: marketTypes,
-        },
-        maxResults: "200",
-        marketProjection: ["EVENT", "RUNNER_METADATA"],
-      }
-    );
-
+    const marketCatalogues = cataloguesResult || [];
     const marketIds = marketCatalogues.map(m => m.marketId);
 
-    const marketBooks = await betfairRpc(
-      "SportsAPING/v1.0/listMarketBook",
-      {
-        marketIds,
-        priceProjection: { priceData: ["EX_BEST_OFFERS"] },
-      }
-    );
-
-    const finalData = marketCatalogues
-      .map(market => {
-        const event = events.find(e => e.event.id === market.event.id);
-
-        // SAFE BOOK
-        const book = marketBooks.find(b => b.marketId === market.marketId);
-
-        // Agar MarketBook missing ho → skip this market
-        if (!book || !book.runners) {
-          return null;
+    // 🎯 Step 3: Get Market Books (Live Odds & Status)
+    let marketBooks = [];
+    if (marketIds.length > 0) {
+      const booksResult = await betfairRpc('SportsAPING/v1.0/listMarketBook', {
+        marketIds: marketIds,
+        priceProjection: {
+          priceData: ['EX_BEST_OFFERS'], // Get best back/lay
+          exBestOffersOverrides: { bestPricesDepth: 1 } // We only need the top price
         }
+      });
+      marketBooks = booksResult || [];
+    }
 
-        const selections = market.runners.map(r => {
-          const rb = book.runners.find(rr => rr.selectionId === r.selectionId);
+    // 🔄 Combine & Structure Data
+    // We group data by Event -> Markets
+    const formattedData = events.map(eventItem => {
+      const eventId = eventItem.event.id;
+      const eventName = eventItem.event.name;
+      const openDate = eventItem.event.openDate;
 
+      // Find all markets belonging to this event
+      const eventMarkets = marketCatalogues.filter(c => c.event.id === eventId);
+
+      // Process each market (MATCH_ODDS, TOSS, etc.)
+      const marketsData = eventMarkets.map(market => {
+        // Find the live book for this market
+        const book = marketBooks.find(b => b.marketId === market.marketId);
+        
+        // Map Runners (Selections)
+        const runners = market.runners.map(runner => {
+          const runnerBook = book?.runners?.find(r => r.selectionId === runner.selectionId);
+          
           return {
-            name: r.runnerName,
-            back: rb?.ex?.availableToBack?.[0] || { price: "-", size: "-" },
-            lay: rb?.ex?.availableToLay?.[0] || { price: "-", size: "-" },
+            selectionId: runner.selectionId,
+            name: runner.runnerName,
+            status: runnerBook?.status || 'UNKNOWN',
+            handicap: runnerBook?.handicap || 0,
+            // Safe navigation for Odds
+            back: runnerBook?.ex?.availableToBack?.[0] || { price: 0, size: 0 },
+            lay: runnerBook?.ex?.availableToLay?.[0] || { price: 0, size: 0 }
           };
         });
 
         return {
           marketId: market.marketId,
-          match: event?.event.name || "Unknown",
-          marketType: market.description.marketType,
-          startTime: event?.event.openDate || "",
-          marketStatus: book.status || "UNKNOWN",
-          totalMatched: book.totalMatched || 0,
-          selections,
+          marketName: market.marketName,
+          marketType: market.description?.marketType || 'UNKNOWN',
+          status: book?.status || 'CLOSED', // OPEN, SUSPENDED, CLOSED
+          totalMatched: book?.totalMatched || 0,
+          runners: runners
         };
-      })
-      .filter(Boolean); // null markets remove
+      });
+
+      // Return the consolidated Event Object
+      return {
+        eventId: eventId,
+        matchName: eventName,
+        startTime: openDate,
+        markets: marketsData
+      };
+    });
+
+    // Remove events that have no markets (optional cleanup)
+    const cleanData = formattedData.filter(e => e.markets.length > 0);
 
     res.status(200).json({
-      status: "success",
-      data: finalData,
+      status: 'success',
+      count: cleanData.length,
+      data: cleanData
     });
 
   } catch (err) {
-    console.error("❌ Live Cricket Error:", err);
+    console.error('❌ Server Error:', err.message);
     res.status(500).json({
-      status: "error",
-      message: "Failed to fetch cricket data",
-      error: err.message,
+      status: 'error',
+      message: 'Failed to process cricket data',
+      error: err.message
     });
   }
 });
-
-async function betfairRpc(method, params) {
-  const sessionToken = await getSessionToken();
-  const res = await axios.post(
-    "https://api.betfair.com/exchange/betting/json-rpc/v1",
-    [
-      {
-        jsonrpc: "2.0",
-        method,
-        id: 1,
-        params,
-      },
-    ],
-    {
-      headers: {
-        "X-Application": APP_KEY,
-        "X-Authentication": sessionToken,
-        "Content-Type": "application/json",
-      },
-    }
-  );
-  return res.data[0].result;
-}
 router.get("/inplay/soccer", async (req, res) => {
   try {
     const sportId = 1;
