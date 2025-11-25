@@ -339,7 +339,7 @@ router.get('/live/cricket', async (req, res) => {
       "OTHER"
     ];
 
-    // Step 1: Events
+    // Step 1: Cricket events
     const events = await betfairRpc("SportsAPING/v1.0/listEvents", {
       filter: { eventTypeIds: ["4"] }
     }) || [];
@@ -370,45 +370,36 @@ router.get('/live/cricket', async (req, res) => {
       }
     ) || [];
 
-    // Convert array to object for fast lookup
     const bookMap = {};
-    for (const book of marketBooks) {
-      bookMap[book.marketId] = book;
-    }
+    for (const b of marketBooks) bookMap[b.marketId] = b;
 
-    // Step 4: Merge data safely
+    // Step 4: Final merged dataset
     const finalData = marketCatalogues.map(market => {
       const event = events.find(e => e.event.id === market.event.id);
-
       const book = bookMap[market.marketId] || null;
 
       const selections = market.runners.map(r => {
-        const runnerBook = book?.runners?.find?.(
-          rr => rr.selectionId === r.selectionId
-        );
+        const rb = book?.runners?.find?.(rr => rr.selectionId === r.selectionId);
 
         return {
           name: r.runnerName,
-          back: runnerBook?.ex?.availableToBack?.[0] || { price: "-", size: "-" },
-          lay: runnerBook?.ex?.availableToLay?.[0] || { price: "-", size: "-" }
+          back: rb?.ex?.availableToBack?.[0] || { price: '-', size: '-' },
+          lay: rb?.ex?.availableToLay?.[0] || { price: '-', size: '-' }
         };
       });
 
       return {
         marketId: market.marketId,
         match: event?.event?.name || "Unknown",
-        marketType: market.description.marketType,
         startTime: event?.event?.openDate || "",
+        marketType: market.description?.marketType || "UNKNOWN",  // 🔥 FIXED
         marketStatus: book?.status || "UNKNOWN",
         totalMatched: book?.totalMatched || 0,
         selections
       };
     });
 
-    res.json({
-      status: "success",
-      data: finalData
-    });
+    res.json({ status: "success", data: finalData });
 
   } catch (err) {
     console.error("❌ Error details:", err);
@@ -419,6 +410,26 @@ router.get('/live/cricket', async (req, res) => {
     });
   }
 });
+
+async function betfairRpc(method, params) {
+  const sessionToken = await getSessionToken();
+  const res = await axios.post(
+    "https://api.betfair.com/exchange/betting/json-rpc/v1",
+    [
+      { jsonrpc: "2.0", method, id: 1, params }
+    ],
+    {
+      headers: {
+        "X-Application": APP_KEY,
+        "X-Authentication": sessionToken,
+        "Content-Type": "application/json"
+      }
+    }
+  );
+
+  return res?.data?.[0]?.result;
+}
+
 
 async function betfairRpc(method, params) {
   const sessionToken = await getSessionToken();
