@@ -326,76 +326,78 @@ async function betfairRpc(method, params) {
 router.get('/live/cricket', async (req, res) => {
   try {
     // 🎯 Step 1: Get Active Cricket Events
-    // EventTypeId 4 = Cricket
     const eventsResult = await betfairRpc('SportsAPING/v1.0/listEvents', {
       filter: {
-        eventTypeIds: ['4'],
-        // Optional: Filter by time to get only current/future matches
+        eventTypeIds: ['4'], // Cricket
         marketStartTime: {
-            from: new Date().toISOString()
+          from: new Date().toISOString()
         }
       }
     });
 
+    // SAFEGUARD: Ensure events exist
     const events = eventsResult || [];
     if (events.length === 0) {
-      return res.status(200).json({ status: 'success', message: 'No active cricket events found', data: [] });
+      return res.status(200).json({ status: 'success', message: 'No active cricket events', data: [] });
     }
 
-    const eventIds = events.map(e => e.event.id);
+    // SAFEGUARD: Filter out any bad data where event object is missing
+    const eventIds = events.map(e => e.event && e.event.id).filter(id => id);
 
-    // 🎯 Step 2: Get Market Catalogues (MATCH_ODDS, BOOKMAKER, TOSS)
-    // We request specific market types for the events found above
+    // 🎯 Step 2: Get Market Catalogues
+    // CRITICAL FIX: Added 'EVENT' to marketProjection so we can map markets back to matches
     const cataloguesResult = await betfairRpc('SportsAPING/v1.0/listMarketCatalogue', {
       filter: {
         eventIds: eventIds,
-        marketTypeCodes: ['MATCH_ODDS', 'BOOKMAKER', 'TOSS'] // TOSS usually implies Toss Winner
+        marketTypeCodes: ['MATCH_ODDS', 'BOOKMAKER', 'TOSS']
       },
-      maxResults: '100', // Ensure we get enough markets
-      marketProjection: ['MARKET_START_TIME', 'RUNNER_METADATA', 'MARKET_DESCRIPTION']
+      maxResults: '100',
+      marketProjection: [
+        'EVENT',              // <--- THIS WAS MISSING, CAUSING THE ERROR
+        'MARKET_START_TIME', 
+        'RUNNER_METADATA', 
+        'MARKET_DESCRIPTION'
+      ]
     });
 
     const marketCatalogues = cataloguesResult || [];
     const marketIds = marketCatalogues.map(m => m.marketId);
 
-    // 🎯 Step 3: Get Market Books (Live Odds & Status)
+    // 🎯 Step 3: Get Market Books (Live Odds)
     let marketBooks = [];
     if (marketIds.length > 0) {
       const booksResult = await betfairRpc('SportsAPING/v1.0/listMarketBook', {
         marketIds: marketIds,
         priceProjection: {
-          priceData: ['EX_BEST_OFFERS'], // Get best back/lay
-          exBestOffersOverrides: { bestPricesDepth: 1 } // We only need the top price
+          priceData: ['EX_BEST_OFFERS'],
+          exBestOffersOverrides: { bestPricesDepth: 1 }
         }
       });
       marketBooks = booksResult || [];
     }
 
-    // 🔄 Combine & Structure Data
-    // We group data by Event -> Markets
+    // 🔄 Combine Data (Crash Proof Logic)
     const formattedData = events.map(eventItem => {
+      // Safety Check
+      if (!eventItem.event) return null;
+
       const eventId = eventItem.event.id;
       const eventName = eventItem.event.name;
       const openDate = eventItem.event.openDate;
 
-      // Find all markets belonging to this event
-      const eventMarkets = marketCatalogues.filter(c => c.event.id === eventId);
+      // Filter markets for this specific event
+      // SAFEGUARD: Use ?. to prevent "Cannot read properties of undefined"
+      const eventMarkets = marketCatalogues.filter(c => c.event?.id === eventId);
 
-      // Process each market (MATCH_ODDS, TOSS, etc.)
       const marketsData = eventMarkets.map(market => {
-        // Find the live book for this market
         const book = marketBooks.find(b => b.marketId === market.marketId);
         
-        // Map Runners (Selections)
         const runners = market.runners.map(runner => {
           const runnerBook = book?.runners?.find(r => r.selectionId === runner.selectionId);
-          
           return {
             selectionId: runner.selectionId,
             name: runner.runnerName,
             status: runnerBook?.status || 'UNKNOWN',
-            handicap: runnerBook?.handicap || 0,
-            // Safe navigation for Odds
             back: runnerBook?.ex?.availableToBack?.[0] || { price: 0, size: 0 },
             lay: runnerBook?.ex?.availableToLay?.[0] || { price: 0, size: 0 }
           };
@@ -405,32 +407,27 @@ router.get('/live/cricket', async (req, res) => {
           marketId: market.marketId,
           marketName: market.marketName,
           marketType: market.description?.marketType || 'UNKNOWN',
-          status: book?.status || 'CLOSED', // OPEN, SUSPENDED, CLOSED
+          status: book?.status || 'CLOSED',
           totalMatched: book?.totalMatched || 0,
           runners: runners
         };
       });
 
-      // Return the consolidated Event Object
       return {
         eventId: eventId,
         matchName: eventName,
         startTime: openDate,
         markets: marketsData
       };
-    });
-
-    // Remove events that have no markets (optional cleanup)
-    const cleanData = formattedData.filter(e => e.markets.length > 0);
+    }).filter(item => item !== null && item.markets.length > 0); // Remove nulls and empty matches
 
     res.status(200).json({
       status: 'success',
-      count: cleanData.length,
-      data: cleanData
+      data: formattedData
     });
 
   } catch (err) {
-    console.error('❌ Server Error:', err.message);
+    console.error('❌ API Logic Error:', err);
     res.status(500).json({
       status: 'error',
       message: 'Failed to process cricket data',
