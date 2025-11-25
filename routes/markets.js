@@ -327,7 +327,6 @@ router.get('/live/cricket', async (req, res) => {
   try {
     const sessionToken = await getSessionToken();
 
-    // Available market types in UI
     const REQUIRED_MARKETS = [
       "MATCH_ODDS",
       "BOOKMAKER",
@@ -340,62 +339,66 @@ router.get('/live/cricket', async (req, res) => {
       "OTHER"
     ];
 
-    // Step 1: Get Cricket Events
-    const eventsResponse = await betfairRpc("SportsAPING/v1.0/listEvents", {
+    // Step 1: Events
+    const events = await betfairRpc("SportsAPING/v1.0/listEvents", {
       filter: { eventTypeIds: ["4"] }
-    });
-    const events = eventsResponse || [];
-    const eventIds = events.map(e => e.event.id);
+    }) || [];
 
+    const eventIds = events.map(e => e.event.id);
     if (eventIds.length === 0) {
       return res.json({ status: "success", data: [] });
     }
 
-    // Step 2: Fetch market catalogues for all required market types
-    const marketCatalogueResponse = await betfairRpc(
+    // Step 2: Market catalogues
+    const marketCatalogues = await betfairRpc(
       "SportsAPING/v1.0/listMarketCatalogue",
       {
-        filter: {
-          eventIds,
-          marketTypeCodes: REQUIRED_MARKETS
-        },
+        filter: { eventIds, marketTypeCodes: REQUIRED_MARKETS },
         maxResults: "500",
         marketProjection: ["EVENT", "RUNNER_METADATA"]
       }
-    );
+    ) || [];
 
-    const marketCatalogues = marketCatalogueResponse || [];
     const marketIds = marketCatalogues.map(m => m.marketId);
 
-    // Step 3: Fetch Market Books
+    // Step 3: Market books
     const marketBooks = await betfairRpc(
       "SportsAPING/v1.0/listMarketBook",
       {
         marketIds,
         priceProjection: { priceData: ["EX_BEST_OFFERS"] }
       }
-    );
+    ) || [];
 
-    // Step 4: Merge Final Data
+    // Convert array to object for fast lookup
+    const bookMap = {};
+    for (const book of marketBooks) {
+      bookMap[book.marketId] = book;
+    }
+
+    // Step 4: Merge data safely
     const finalData = marketCatalogues.map(market => {
-      const book = marketBooks.find(b => b.marketId === market.marketId);
       const event = events.find(e => e.event.id === market.event.id);
 
+      const book = bookMap[market.marketId] || null;
+
       const selections = market.runners.map(r => {
-        const rb = book?.runners?.find(rr => rr.selectionId === r.selectionId);
+        const runnerBook = book?.runners?.find?.(
+          rr => rr.selectionId === r.selectionId
+        );
 
         return {
           name: r.runnerName,
-          back: rb?.ex?.availableToBack?.[0] || { price: "-", size: "-" },
-          lay: rb?.ex?.availableToLay?.[0] || { price: "-", size: "-" }
+          back: runnerBook?.ex?.availableToBack?.[0] || { price: "-", size: "-" },
+          lay: runnerBook?.ex?.availableToLay?.[0] || { price: "-", size: "-" }
         };
       });
 
       return {
         marketId: market.marketId,
-        match: event?.event.name || "Unknown",
+        match: event?.event?.name || "Unknown",
         marketType: market.description.marketType,
-        startTime: event?.event.openDate || "",
+        startTime: event?.event?.openDate || "",
         marketStatus: book?.status || "UNKNOWN",
         totalMatched: book?.totalMatched || 0,
         selections
@@ -408,6 +411,7 @@ router.get('/live/cricket', async (req, res) => {
     });
 
   } catch (err) {
+    console.error("❌ Error details:", err);
     res.status(500).json({
       status: "error",
       message: "Failed to fetch data",
@@ -415,6 +419,26 @@ router.get('/live/cricket', async (req, res) => {
     });
   }
 });
+
+async function betfairRpc(method, params) {
+  const sessionToken = await getSessionToken();
+  const res = await axios.post(
+    "https://api.betfair.com/exchange/betting/json-rpc/v1",
+    [
+      { jsonrpc: "2.0", method, id: 1, params }
+    ],
+    {
+      headers: {
+        "X-Application": APP_KEY,
+        "X-Authentication": sessionToken,
+        "Content-Type": "application/json"
+      }
+    }
+  );
+
+  return res?.data?.[0]?.result;
+}
+
 
 async function betfairRpc(method, params) {
   const sessionToken = await getSessionToken();
