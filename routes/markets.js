@@ -1792,8 +1792,8 @@ const sportMap = {
 };
 router.get('/catalog2', async (req, res) => {
   try {
-    const eventId = req.query.eventId;
-    if (!eventId) return res.status(400).json({ error: "eventId is required" });
+const marketId = req.query.id;
+if (!marketId ) return res.status(400).json({ error: "eventId is required" });
 
     const token = await getSessionToken();
     const headers = {
@@ -1809,7 +1809,7 @@ router.get('/catalog2', async (req, res) => {
         jsonrpc: "2.0",
         method: "SportsAPING/v1.0/listMarketCatalogue",
         params: {
-          filter: { eventIds: [eventId] },
+          filter: { eventIds: [marketId] },
           marketProjection: ["EVENT", "MARKET_START_TIME", "RUNNER_DESCRIPTION", "MARKET_DESCRIPTION", "MARKET_START_TIME", "COMPETITION"],
           maxResults: 200
         },
