@@ -1807,7 +1807,7 @@ router.get('/catalog2', async (req, res) => {
       'Content-Type': 'application/json'
     };
 
-    // 🧠 1. Get Market Catalogue
+    // 1️⃣ Get Market Catalogue
     const catalogResponse = await axios.post(
       'https://api.betfair.com/exchange/betting/json-rpc/v1',
       [{
@@ -1821,7 +1821,7 @@ router.get('/catalog2', async (req, res) => {
             "RUNNER_DESCRIPTION",
             "COMPETITION",
             "MARKET_DESCRIPTION",
-            "EVENT_TYPE" // Ensure EVENT_TYPE is included
+            "EVENT_TYPE"
           ],
           maxResults: "1"
         },
@@ -1837,7 +1837,7 @@ router.get('/catalog2', async (req, res) => {
 
     const rules = catalog.description?.rules || "No rules available.";
 
-    // 🧠 2. Get Market Book
+    // 2️⃣ Get Market Book
     const bookResponse = await axios.post(
       'https://api.betfair.com/exchange/betting/json-rpc/v1',
       [{
@@ -1856,36 +1856,36 @@ router.get('/catalog2', async (req, res) => {
     if (!book) {
       return res.status(404).json({ error: "Market book not found" });
     }
-  // ... (previous code remains the same until sport mapping)
 
-const eventTypeId = catalog.eventType?.id || null; // Correctly extract eventTypeId
-const eventTypeName = catalog.eventType?.name || "Unknown"; // Extract eventType name
+    // 3️⃣ Determine sport & icons
+    const eventTypeId = catalog.eventType?.id || null;
+    const eventTypeName = catalog.eventType?.name || "Unknown";
 
-const sportMapById = {
-  "4": "Cricket",
-  "2": "Tennis",
-  "7": "Horse Racing",
-  "1": "Football",
-  "4339": "Greyhound",  // Greyhound ka ID (jo betfair ka hai, yeh check kar lena)
-  // Agar aur sports chahiye to yahan add kar sakte ho
-};
+    const sportMapById = {
+      "4": "Cricket",
+      "2": "Tennis",
+      "7": "Horse Racing",
+      "1": "Football",
+      "4339": "Greyhound",
+    };
 
-const sportIconMap = {
-  "Cricket": "cricket.svg",
-  "Tennis": "tennis.svg",
-  "Horse Racing": "horse.svg",
-  "Football": "soccer.svg",
-  "Greyhound": "greyhound-racing.svg",  // Greyhound ka icon file
-  "Unknown": "default.svg",
-};
+    const sportIconMap = {
+      "Cricket": "cricket.svg",
+      "Tennis": "tennis.svg",
+      "Horse Racing": "horse.svg",
+      "Football": "soccer.svg",
+      "Greyhound": "greyhound-racing.svg",
+      "Unknown": "default.svg",
+    };
 
-let sportName = eventTypeName; // Use the eventType name directly
-if (eventTypeId && sportMapById[eventTypeId]) {
-  sportName = sportMapById[eventTypeId]; // Override with mapped name if ID exists
-}
+    let sportName = sportMapById[eventTypeId] || eventTypeName;
+    const sportIcon = sportIconMap[sportName] || "default.svg";
 
-const sportIcon = sportIconMap[sportName] || "default.svg";
+    // 4️⃣ Check if odds exist for runners
+    const hasBookmaker = book.runners.some(r => r.ex && r.ex.availableToBack && r.ex.availableToBack.length > 0);
+    const hasFancy = catalog.marketType?.toUpperCase().includes('FANCY') || false;
 
+    // 5️⃣ Build response
     const response = {
       marketId: catalog.marketId,
       marketName: catalog.marketName,
@@ -1898,7 +1898,6 @@ const sportIcon = sportIconMap[sportName] || "default.svg";
       priceLadderDetails: catalog.description?.priceLadderDescription || "CLASSIC",
       eventTypeId: eventTypeId,
       eventType: sportName,
-
       eventId: catalog.event?.id,
       eventName: catalog.event?.name,
       competitionId: catalog.competition?.id,
@@ -1918,33 +1917,34 @@ const sportIcon = sportIconMap[sportName] || "default.svg";
       sortPriority: -1,
       cancelDelay: 0,
       maxOdds: 120,
-      runners: catalog.runners.map(runner => ({
-        marketId: catalog.marketId,
-        selectionId: runner.selectionId,
-        runnerName: runner.runnerName,
-        handicap: runner.handicap,
-        sortPriority: runner.sortPriority,
-        status: "ACTIVE",
-        removalDate: null,
-        silkColor: "",
-        score: null,
-        adjFactor: null,
-        metadata: JSON.stringify({ runnerId: runner.selectionId }),
-        jockeyName: "",
-        trainerName: "",
-        age: "",
-        weight: "",
-        lastRun: "",
-        wearing: "",
-        state: 0
-      })),
-
+      runners: catalog.runners.map(runner => {
+        const runnerBook = book.runners.find(r => r.selectionId === runner.selectionId);
+        return {
+          marketId: catalog.marketId,
+          selectionId: runner.selectionId,
+          runnerName: runner.runnerName,
+          handicap: runner.handicap,
+          sortPriority: runner.sortPriority,
+          status: "ACTIVE",
+          removalDate: null,
+          silkColor: "",
+          score: null,
+          adjFactor: null,
+          metadata: JSON.stringify({ runnerId: runner.selectionId }),
+          jockeyName: "",
+          trainerName: "",
+          age: "",
+          weight: "",
+          lastRun: "",
+          wearing: "",
+          state: 0,
+          odds: runnerBook?.ex || null  // <-- include available odds here
+        }
+      }),
       sport: {
-      name: sportName,
-      image: sportIcon,
-
+        name: sportName,
+        image: sportIcon,
         active: true,
-        // image: "cricket.svg",
         autoOpen: false,
         allowSubMarkets: false,
         amountRequired: 100000,
@@ -1959,13 +1959,12 @@ const sportIcon = sportIconMap[sportName] || "default.svg";
       raceName: null,
       minutesToOpenMarket: 9999,
       statusOverride: 0,
-      hasFancyOdds: false,
-      isFancy: false,
+      hasFancyOdds: hasFancy,
+      isFancy: hasFancy,
       isLocalFancy: false,
-      isBmMarket: true,
-      eventType: "Cricket",
+      isBmMarket: hasBookmaker,
       hasSessionMarkets: false,
-      hasBookmakerMarkets: false,
+      hasBookmakerMarkets: hasBookmaker,
       updatedAt: new Date().toISOString(),
       casinoPl: null,
       removedRunnersCount: 0,
@@ -1982,6 +1981,7 @@ const sportIcon = sportIconMap[sportName] || "default.svg";
     });
   }
 });
+
 
 
 
