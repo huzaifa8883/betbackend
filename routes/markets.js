@@ -490,41 +490,47 @@ router.get('/live/cricket', async (req, res) => {
 
     // 🔄 Step 4: Combine markets
     const finalData = marketCatalogues.map(market => {
-      const matchingBook = marketBooks.find(b => b.marketId === market.marketId);
-      const event = events.find(e => e.event.id === market.event.id);
+  const matchingBook = marketBooks.find(b => b.marketId === market.marketId);
+  const event = events.find(e => e.event.id === market.event.id);
 
-      const selections = market.runners.map(runner => {
-        const runnerBook = matchingBook?.runners.find(r => r.selectionId === runner.selectionId);
-        return {
-          name: runner.runnerName,
-          back: runnerBook?.ex?.availableToBack?.[0] || { price: '-', size: '-' },
-          lay: runnerBook?.ex?.availableToLay?.[0] || { price: '-', size: '-' }
-        };
-      });
+  const selections = market.runners.map(runner => {
+    const runnerBook = matchingBook?.runners.find(r => r.selectionId === runner.selectionId);
 
-      let odds = null;
-      if (market.marketType === 'MATCH_ODDS') {
-        odds = {
-          back1: selections[0]?.back || { price: '-', size: '-' },
-          lay1: selections[0]?.lay || { price: '-', size: '-' },
-          backX: selections[1]?.back || { price: '-', size: '-' },
-          layX: selections[1]?.lay || { price: '-', size: '-' },
-          back2: selections[2]?.back || { price: '-', size: '-' },
-          lay2: selections[2]?.lay || { price: '-', size: '-' }
-        };
-      }
+    return {
+      name: runner.runnerName,
+      back: runnerBook?.ex?.availableToBack?.[0] || { price: '-', size: '-' },
+      lay: runnerBook?.ex?.availableToLay?.[0] || { price: '-', size: '-' }
+    };
+  });
 
-      return {
-        marketId: market.marketId,
-        marketType: market.marketType,
-        match: event?.event.name || 'Unknown',
-        startTime: event?.event.openDate || '',
-        marketStatus: matchingBook?.status || 'UNKNOWN',
-        totalMatched: matchingBook?.totalMatched || 0,
-        odds: odds,
-        selections: market.marketType === 'MATCH_ODDS' ? undefined : selections
-      };
-    });
+  let odds = null;
+
+  if (market.marketType === 'MATCH_ODDS') {
+    // Special format for MATCH_ODDS
+    odds = {
+      back1: selections[0]?.back || { price: '-', size: '-' },
+      lay1: selections[0]?.lay || { price: '-', size: '-' },
+      backX: selections[1]?.back || { price: '-', size: '-' },
+      layX: selections[1]?.lay || { price: '-', size: '-' },
+      back2: selections[2]?.back || { price: '-', size: '-' },
+      lay2: selections[2]?.lay || { price: '-', size: '-' }
+    };
+  } else {
+    // Normal format for all other markets
+    odds = selections.map(s => ({ name: s.name, back: s.back, lay: s.lay }));
+  }
+
+  return {
+    marketId: market.marketId,
+    marketType: market.marketType,
+    match: event?.event.name || 'Unknown',
+    startTime: event?.event.openDate || '',
+    marketStatus: matchingBook?.status || 'UNKNOWN',
+    totalMatched: matchingBook?.totalMatched || 0,
+    odds: odds
+  };
+});
+
 
     res.status(200).json({
       status: 'success',
