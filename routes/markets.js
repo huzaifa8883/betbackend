@@ -1830,9 +1830,7 @@ router.get('/catalog2', async (req, res) => {
     );
 
     const catalog = catalogResponse.data[0]?.result?.[0];
-    if (!catalog) {
-      return res.status(404).json({ error: "Market catalog not found" });
-    }
+    if (!catalog) return res.status(404).json({ error: "Market catalog not found" });
 
     const rules = catalog.description?.rules || "No rules available.";
 
@@ -1852,9 +1850,7 @@ router.get('/catalog2', async (req, res) => {
     );
 
     const book = bookResponse.data[0]?.result?.[0];
-    if (!book) {
-      return res.status(404).json({ error: "Market book not found" });
-    }
+    if (!book) return res.status(404).json({ error: "Market book not found" });
 
     // Event/Sport mapping
     const eventTypeId = catalog.eventType?.id || null;
@@ -1877,8 +1873,15 @@ router.get('/catalog2', async (req, res) => {
       "Unknown": "default.svg",
     };
 
-    let sportName = sportMapById[eventTypeId] || eventTypeName;
+    const sportName = sportMapById[eventTypeId] || eventTypeName;
     const sportIcon = sportIconMap[sportName] || "default.svg";
+
+    // Dynamic flags based on sport/market
+    const hasFancyOdds = ["Cricket", "Tennis"].includes(sportName);
+    const isFancy = hasFancyOdds;
+    const isLocalFancy = hasFancyOdds;
+    const hasBookmakerMarkets = ["Cricket", "Football", "Horse Racing"].includes(sportName);
+    const hasSessionMarkets = ["Football", "Tennis"].includes(sportName);
 
     const response = {
       marketId: catalog.marketId,
@@ -1917,7 +1920,7 @@ router.get('/catalog2', async (req, res) => {
         runnerName: runner.runnerName,
         handicap: runner.handicap,
         sortPriority: runner.sortPriority,
-        status: runner.status || "ACTIVE", // dynamic status
+        status: runner.status || "ACTIVE",
         removalDate: null,
         silkColor: "",
         score: null,
@@ -1949,12 +1952,12 @@ router.get('/catalog2', async (req, res) => {
       raceName: null,
       minutesToOpenMarket: 9999,
       statusOverride: 0,
-      hasFancyOdds: false,
-      isFancy: false,
-      isLocalFancy: false,
+      hasFancyOdds,
+      isFancy,
+      isLocalFancy,
       isBmMarket: true,
-      hasSessionMarkets: false,
-      hasBookmakerMarkets: false,
+      hasSessionMarkets,
+      hasBookmakerMarkets,
       updatedAt: new Date().toISOString(),
       casinoPl: null,
       removedRunnersCount: 0,
@@ -1971,6 +1974,7 @@ router.get('/catalog2', async (req, res) => {
     });
   }
 });
+
 
 
 router.get('/Data', async (req, res) => {
