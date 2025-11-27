@@ -321,74 +321,6 @@ async function betfairRpc(method, params) {
     return null;
   }
 }
-router.get('/cricket/events', async (req, res) => {
-  try {
-    const sessionToken = await getSessionToken();
-
-    const response = await axios.post(
-      'https://api.betfair.com/exchange/betting/json-rpc/v1',
-      [
-        {
-          jsonrpc: '2.0',
-          method: 'SportsAPING/v1.0/listEvents',
-          params: {
-            filter: { eventTypeIds: ["4"] }   // Cricket
-          },
-          id: 1
-        }
-      ],
-      {
-        headers: {
-          'X-Application': APP_KEY,
-          'X-Authentication': sessionToken,
-          'Content-Type': 'application/json'
-        }
-      }
-    );
-
-    const events = response.data[0].result || [];
-
-    res.json({ events });
-  } catch (e) {
-    res.json({ error: e.message });
-  }
-});
-router.get('/cricket/:eventId/markettypes', async (req, res) => {
-  try {
-    const { eventId } = req.params;
-    const sessionToken = await getSessionToken();
-
-    const response = await axios.post(
-      'https://api.betfair.com/exchange/betting/json-rpc/v1',
-      [
-        {
-          jsonrpc: '2.0',
-          method: 'SportsAPING/v1.0/listMarketTypes',
-          params: {
-            filter: { eventIds: [eventId] }
-          },
-          id: 1
-        }
-      ],
-      {
-        headers: {
-          'X-Application': APP_KEY,
-          'X-Authentication': sessionToken,
-          'Content-Type': 'application/json'
-        }
-      }
-    );
-
-    const marketTypes = response.data[0].result || [];
-
-    res.json({ marketTypes });
-
-  } catch (e) {
-    res.json({ error: e.message });
-  }
-});
-
-// 🏏 Main Route: Live Cricket Data
 router.get('/live/cricket', async (req, res) => {
   try {
     const sessionToken = await getSessionToken();
@@ -402,7 +334,10 @@ router.get('/live/cricket', async (req, res) => {
           method: 'SportsAPING/v1.0/listEvents',
           params: {
             filter: {
-              eventTypeIds: ['4'] // Cricket
+              eventTypeIds: ['4'],
+              // marketStartTime: {
+              //   from: new Date().toISOString()
+              // }
             }
           },
           id: 1
@@ -420,20 +355,7 @@ router.get('/live/cricket', async (req, res) => {
     const events = eventsResponse.data[0]?.result || [];
     const eventIds = events.map(e => e.event.id);
 
-    // 📌 Only real Betfair cricket markets
-    const marketTypesNeeded = [
-      'MATCH_ODDS',
-      'TOSS_WINNER',
-      '1ST_INNINGS_RUNS',
-      '2ND_INNINGS_RUNS',
-      'INNINGS_RUN_LINE',
-      'TOP_BATSMAN',
-      'TOP_BOWLER',
-      'METHOD_OF_DISMISSAL',
-      'OVER_UNDER'
-    ];
-
-    // 🎯 Step 2: Fetch market catalogue
+    // 🎯 Step 2: Get market catalogue
     const marketCatalogueResponse = await axios.post(
       'https://api.betfair.com/exchange/betting/json-rpc/v1',
       [
@@ -443,9 +365,9 @@ router.get('/live/cricket', async (req, res) => {
           params: {
             filter: {
               eventIds: eventIds,
-              marketTypeCodes: marketTypesNeeded
+              marketTypeCodes: ['MATCH_ODDS']
             },
-            maxResults: '200',
+            maxResults: '10',
             marketProjection: ['EVENT', 'RUNNER_METADATA']
           },
           id: 2
@@ -463,7 +385,7 @@ router.get('/live/cricket', async (req, res) => {
     const marketCatalogues = marketCatalogueResponse.data[0]?.result || [];
     const marketIds = marketCatalogues.map(m => m.marketId);
 
-    // 🎯 Step 3: Fetch market books
+    // 🎯 Step 3: Get market books (odds + volume)
     const marketBookResponse = await axios.post(
       'https://api.betfair.com/exchange/betting/json-rpc/v1',
       [
@@ -472,7 +394,9 @@ router.get('/live/cricket', async (req, res) => {
           method: 'SportsAPING/v1.0/listMarketBook',
           params: {
             marketIds: marketIds,
-            priceProjection: { priceData: ['EX_BEST_OFFERS'] }
+            priceProjection: {
+              priceData: ['EX_BEST_OFFERS']
+            }
           },
           id: 3
         }
@@ -488,14 +412,14 @@ router.get('/live/cricket', async (req, res) => {
 
     const marketBooks = marketBookResponse.data[0]?.result || [];
 
-    // 🔄 Step 4: Combine markets
-    const finalData = marketCatalogues.map(market => {
+    // 🔄 Combine data
+    // 🔄 Combine data
+const finalData = marketCatalogues.map(market => {
   const matchingBook = marketBooks.find(b => b.marketId === market.marketId);
   const event = events.find(e => e.event.id === market.event.id);
 
   const selections = market.runners.map(runner => {
     const runnerBook = matchingBook?.runners.find(r => r.selectionId === runner.selectionId);
-
     return {
       name: runner.runnerName,
       back: runnerBook?.ex?.availableToBack?.[0] || { price: '-', size: '-' },
@@ -503,34 +427,29 @@ router.get('/live/cricket', async (req, res) => {
     };
   });
 
-  let odds = null;
+  // 🧠 Assume:
+  // selections[0] = team 1
+  // selections[1] = X (draw) — only in soccer
+  // selections[2] = team 2
 
-  if (market.marketType === 'MATCH_ODDS') {
-    // Special format for MATCH_ODDS
-    odds = {
-      back1: selections[0]?.back || { price: '-', size: '-' },
-      lay1: selections[0]?.lay || { price: '-', size: '-' },
-      backX: selections[1]?.back || { price: '-', size: '-' },
-      layX: selections[1]?.lay || { price: '-', size: '-' },
-      back2: selections[2]?.back || { price: '-', size: '-' },
-      lay2: selections[2]?.lay || { price: '-', size: '-' }
-    };
-  } else {
-    // Normal format for all other markets
-    odds = selections.map(s => ({ name: s.name, back: s.back, lay: s.lay }));
-  }
+  const odds = {
+    back1: selections[0]?.back || { price: '-', size: '-' },
+    lay1: selections[0]?.lay || { price: '-', size: '-' },
+    backX: selections[1]?.back || { price: '-', size: '-' },
+    layX: selections[1]?.lay || { price: '-', size: '-' },
+    back2: selections[2]?.back || { price: '-', size: '-' },
+    lay2: selections[2]?.lay || { price: '-', size: '-' }
+  };
 
   return {
     marketId: market.marketId,
-    marketType: market.marketType,
     match: event?.event.name || 'Unknown',
     startTime: event?.event.openDate || '',
     marketStatus: matchingBook?.status || 'UNKNOWN',
     totalMatched: matchingBook?.totalMatched || 0,
-    odds: odds
+    odds
   };
 });
-
 
     res.status(200).json({
       status: 'success',
