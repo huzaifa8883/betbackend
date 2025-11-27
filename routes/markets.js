@@ -321,6 +321,48 @@ async function betfairRpc(method, params) {
     return null;
   }
 }
+router.get('/live/cricket/markettypes', async (req, res) => {
+  try {
+    const sessionToken = await getSessionToken();
+
+    // 1. Use listMarketTypes to get all market types for Cricket (eventTypeId = 4)
+    const listMarketTypesResponse = await axios.post(
+      'https://api.betfair.com/exchange/betting/json-rpc/v1',
+      [
+        {
+          jsonrpc: '2.0',
+          method: 'SportsAPING/v1.0/listMarketTypes',
+          params: {
+            eventTypeId: '4'  // Cricket
+          },
+          id: 1
+        }
+      ],
+      {
+        headers: {
+          'X-Application': APP_KEY,
+          'X-Authentication': sessionToken,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    const marketTypes = listMarketTypesResponse.data[0]?.result || [];
+
+    res.status(200).json({
+      status: 'success',
+      marketTypes
+    });
+
+  } catch (err) {
+    console.error('❌ Error fetching market types:', err.message);
+    res.status(500).json({
+      status: 'error',
+      message: 'Could not fetch market types',
+      error: err.message
+    });
+  }
+});
 
 // 🏏 Main Route: Live Cricket Data
 router.get('/live/cricket', async (req, res) => {
