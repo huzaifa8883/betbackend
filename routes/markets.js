@@ -321,19 +321,18 @@ async function betfairRpc(method, params) {
     return null;
   }
 }
-router.get('/live/cricket/markettypes', async (req, res) => {
+router.get('/cricket/events', async (req, res) => {
   try {
     const sessionToken = await getSessionToken();
 
-    // 1. Use listMarketTypes to get all market types for Cricket (eventTypeId = 4)
-    const listMarketTypesResponse = await axios.post(
+    const response = await axios.post(
       'https://api.betfair.com/exchange/betting/json-rpc/v1',
       [
         {
           jsonrpc: '2.0',
-          method: 'SportsAPING/v1.0/listMarketTypes',
+          method: 'SportsAPING/v1.0/listEvents',
           params: {
-            eventTypeId: '4'  // Cricket
+            filter: { eventTypeIds: ["4"] }   // Cricket
           },
           id: 1
         }
@@ -347,20 +346,45 @@ router.get('/live/cricket/markettypes', async (req, res) => {
       }
     );
 
-    const marketTypes = listMarketTypesResponse.data[0]?.result || [];
+    const events = response.data[0].result || [];
 
-    res.status(200).json({
-      status: 'success',
-      marketTypes
-    });
+    res.json({ events });
+  } catch (e) {
+    res.json({ error: e.message });
+  }
+});
+router.get('/cricket/:eventId/markettypes', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    const sessionToken = await getSessionToken();
 
-  } catch (err) {
-    console.error('❌ Error fetching market types:', err.message);
-    res.status(500).json({
-      status: 'error',
-      message: 'Could not fetch market types',
-      error: err.message
-    });
+    const response = await axios.post(
+      'https://api.betfair.com/exchange/betting/json-rpc/v1',
+      [
+        {
+          jsonrpc: '2.0',
+          method: 'SportsAPING/v1.0/listMarketTypes',
+          params: {
+            filter: { eventIds: [eventId] }
+          },
+          id: 1
+        }
+      ],
+      {
+        headers: {
+          'X-Application': APP_KEY,
+          'X-Authentication': sessionToken,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    const marketTypes = response.data[0].result || [];
+
+    res.json({ marketTypes });
+
+  } catch (e) {
+    res.json({ error: e.message });
   }
 });
 
