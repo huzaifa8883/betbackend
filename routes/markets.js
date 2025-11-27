@@ -355,16 +355,21 @@ router.get('/live/cricket', async (req, res) => {
     const eventIds = events.map(e => e.event.id);
 
     // 📌 All market types required for cricket tabs
-    const marketTypesNeeded = [
-      'MATCH_ODDS',     // main odds
-      'TOSS_WINNER',    // Toss
-      'BOOKMAKER',      // BM
-      'ODDS',           // Betfair fancy
-      'SESSION',        // Fancy2
-      'FIGURE',         // Figure
-      'ODD_EVEN',       // Even-Odd
-      'OTHER'           // Others
-    ];
+const marketTypesNeeded = [
+  'MATCH_ODDS',
+  'TOSS_WINNER',
+  'COMPLETED_MATCH',
+  'INNINGS_RUNS',
+  'TOP_BATSMAN',
+  'TOP_BOWLER',
+  'METHOD_OF_DISMISSAL',
+  'NEXT_OVER_RUNS',
+  'NEXT_WICKET',
+  'FALL_OF_WICKET',
+  'OVER_UNDER_RUNS',
+  'ODD_OR_EVEN'
+];
+
 
     // 🎯 Step 2: Fetch ALL marketTypes catalogue
     const marketCatalogueResponse = await axios.post(
