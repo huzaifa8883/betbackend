@@ -1805,8 +1805,10 @@ router.get('/catalog2', async (req, res) => {
       'Content-Type': 'application/json'
     };
 
-    // 🧠 1. Get Market Catalogue (Main Market)
-    const catalogResponse = await axios.post(
+    console.log('🔍 Fetching market data for:', marketId);
+
+    // 🧠 1. Get MAIN Market Catalogue WITH RUNNERS
+    const mainCatalogResponse = await axios.post(
       'https://api.betfair.com/exchange/betting/json-rpc/v1',
       [{
         jsonrpc: "2.0",
@@ -1816,8 +1818,8 @@ router.get('/catalog2', async (req, res) => {
           marketProjection: [
             "EVENT",
             "MARKET_START_TIME",
-            "RUNNER_DESCRIPTION",
-            "COMPETITION",
+            "RUNNER_DESCRIPTION",  // ✅ CRITICAL: Always include
+            "COMPETITION", 
             "MARKET_DESCRIPTION",
             "EVENT_TYPE"
           ],
@@ -1828,121 +1830,148 @@ router.get('/catalog2', async (req, res) => {
       { headers }
     );
 
-    const catalog = catalogResponse.data[0]?.result?.[0];
-    if (!catalog) {
-      return res.status(404).json({ error: "Market catalog not found" });
+    const mainCatalog = mainCatalogResponse.data[0]?.result?.[0];
+    if (!mainCatalog) {
+      return res.status(404).json({ error: "Main market catalog not found" });
     }
 
-    const eventId = catalog.event?.id;
-    const eventTypeId = catalog.eventType?.id;
+    console.log('✅ Main catalog found:', mainCatalog.marketName);
 
-    // 🧠 2. Get ALL Related Markets for this Event
-    const relatedMarketsResponse = await axios.post(
+    // 🧠 2. Get Market Book for MAIN MARKET ONLY (Guaranteed runners)
+    const mainBookResponse = await axios.post(
       'https://api.betfair.com/exchange/betting/json-rpc/v1',
       [{
         jsonrpc: "2.0",
-        method: "SportsAPING/v1.0/listMarketCatalogue",
+        method: "SportsAPING/v1.0/listMarketBook",
         params: {
-          filter: { 
-            eventIds: [eventId],
-            eventTypeIds: [eventTypeId]
-          },
-          marketProjection: [
-            "MARKET_START_TIME",
-            "MARKET_DESCRIPTION",
-            "RUNNER_DESCRIPTION",
-            "EVENT",
-            "COMPETITION"
-          ],
-          maxResults: "200" // Get all markets
+          marketIds: [marketId],
+          priceProjection: { priceData: ["EX_BEST_OFFERS"] }
         },
         id: 2
       }],
       { headers }
     );
 
-    const allMarkets = relatedMarketsResponse.data[0]?.result || [];
+    const mainBook = mainBookResponse.data[0]?.result?.[0];
+    
+    // 🧠 3. Create MAIN MARKET (Guaranteed to have runners)
+    const mainMarket = createMarketObject(mainCatalog, mainBook || {}, true);
+    
+    console.log('✅ Main market created with', mainMarket.runners?.length || 0, 'runners');
 
-    // 🧠 3. Get Market Book for ALL Markets
-    const marketIds = allMarkets.map(m => m.marketId);
-    const bookResponse = await axios.post(
-      'https://api.betfair.com/exchange/betting/json-rpc/v1',
-      [{
-        jsonrpc: "2.0",
-        method: "SportsAPING/v1.0/listMarketBook",
-        params: {
-          marketIds: marketIds,
-          priceProjection: { priceData: ["EX_BEST_OFFERS"] }
-        },
-        id: 3
-      }],
-      { headers }
-    );
+    // 🧠 4. Get RELATED MARKETS (Optional - for additional markets)
+    const marketsArray = [mainMarket]; // Start with main market
+    const eventId = mainCatalog.event?.id;
+    const eventTypeId = mainCatalog.eventType?.id;
 
-    const marketBooks = bookResponse.data[0]?.result || [];
+    if (eventId && eventTypeId) {
+      try {
+        // Get related markets WITHOUT RUNNER_DESCRIPTION (for filtering only)
+        const relatedMarketsResponse = await axios.post(
+          'https://api.betfair.com/exchange/betting/json-rpc/v1',
+          [{
+            jsonrpc: "2.0",
+            method: "SportsAPING/v1.0/listMarketCatalogue",
+            params: {
+              filter: {
+                eventIds: [eventId],
+                eventTypeIds: [eventTypeId]
+              },
+              marketProjection: [
+                "MARKET_START_TIME",
+                "MARKET_DESCRIPTION",
+                "EVENT"
+              ],
+              maxResults: "50"
+            },
+            id: 3
+          }],
+          { headers }
+        );
 
-    // 🧠 4. Categorize Markets
-    const marketsArray = [];
+        const allMarkets = relatedMarketsResponse.data[0]?.result || [];
 
-    // **MAIN MARKET** (Original marketId)
-    const mainMarketBook = marketBooks.find(book => book.marketId === marketId);
-    if (mainMarketBook) {
-      marketsArray.push(createMarketObject(catalog, mainMarketBook, headers));
-    }
+        // 🧠 5. Filter and create additional markets
+        const bookmakerMarkets = allMarkets.filter(market =>
+          market.marketName.toLowerCase().includes('bookmaker') &&
+          market.marketId !== marketId
+        );
 
-    // **BOOKMAKER MARKETS** - Filter by name and isBmMarket
-    const bookmakerMarkets = allMarkets.filter(market => 
-      market.marketName.toLowerCase().includes('bookmaker') ||
-      (market.marketType === 'MATCH_ODDS' && 
-       market.marketName.toLowerCase().includes('match odds'))
-    );
+        const tossMarkets = eventTypeId == 4 ? allMarkets.filter(market =>
+          market.marketName.toLowerCase().includes('toss') &&
+          market.marketId !== marketId
+        ) : [];
 
-    for (const bmMarket of bookmakerMarkets) {
-      if (bmMarket.marketId !== marketId) { // Avoid duplicate
-        const bmBook = marketBooks.find(book => book.marketId === bmMarket.marketId);
-        if (bmBook) {
-          const bmMarketObj = { ...bmMarket, isBmMarket: true };
-          marketsArray.push(createMarketObject(bmMarketObj, bmBook, headers));
+        console.log('📊 Found additional markets:', {
+          bookmaker: bookmakerMarkets.length,
+          toss: tossMarkets.length
+        });
+
+        // 🧠 6. For each additional market, get FULL catalog with runners
+        const additionalMarkets = [...bookmakerMarkets, ...tossMarkets].slice(0, 3); // Limit to 3
+
+        for (const addMarket of additionalMarkets) {
+          try {
+            const addCatalogResponse = await axios.post(
+              'https://api.betfair.com/exchange/betting/json-rpc/v1',
+              [{
+                jsonrpc: "2.0",
+                method: "SportsAPING/v1.0/listMarketCatalogue",
+                params: {
+                  filter: { marketIds: [addMarket.marketId] },
+                  marketProjection: [
+                    "EVENT",
+                    "MARKET_START_TIME",
+                    "RUNNER_DESCRIPTION",  // ✅ CRITICAL
+                    "MARKET_DESCRIPTION",
+                    "EVENT_TYPE"
+                  ],
+                  maxResults: "1"
+                },
+                id: 4
+              }],
+              { headers }
+            );
+
+            const addCatalog = addCatalogResponse.data[0]?.result?.[0];
+            if (addCatalog && addCatalog.runners && addCatalog.runners.length > 0) {
+              const addBookResponse = await axios.post(
+                'https://api.betfair.com/exchange/betting/json-rpc/v1',
+                [{
+                  jsonrpc: "2.0",
+                  method: "SportsAPING/v1.0/listMarketBook",
+                  params: {
+                    marketIds: [addMarket.marketId],
+                    priceProjection: { priceData: ["EX_BEST_OFFERS"] }
+                  },
+                  id: 5
+                }],
+                { headers }
+              );
+
+              const addBook = addBookResponse.data[0]?.result?.[0];
+              const additionalMarket = createMarketObject(addCatalog, addBook || {}, 
+                addMarket.marketName.toLowerCase().includes('bookmaker'));
+              
+              if (additionalMarket.runners && additionalMarket.runners.length > 0) {
+                marketsArray.push(additionalMarket);
+                console.log('✅ Added market:', additionalMarket.marketName);
+              }
+            }
+          } catch (addError) {
+            console.warn('⚠️ Failed to add market', addMarket.marketId, ':', addError.message);
+          }
         }
+
+      } catch (relatedError) {
+        console.warn('⚠️ Failed to fetch related markets:', relatedError.message);
       }
     }
 
-    // **TOSS MARKETS** - Cricket specific
-    if (eventTypeId == 4) { // Cricket
-      const tossMarkets = allMarkets.filter(market => 
-        market.marketName.toLowerCase().includes('toss') ||
-        market.marketType === 'TOSS'
-      );
-
-      for (const tossMarket of tossMarkets) {
-        const tossBook = marketBooks.find(book => book.marketId === tossMarket.marketId);
-        if (tossBook) {
-          marketsArray.push(createMarketObject(tossMarket, tossBook, headers));
-        }
-      }
-    }
-
-    // **FOOTBALL** - Additional markets (Over/Under, Both Teams to Score, etc.)
-    if (eventTypeId == 1) { // Football
-      const footballMarkets = allMarkets.filter(market => 
-        market.marketName.toLowerCase().includes('over') ||
-        market.marketName.toLowerCase().includes('under') ||
-        market.marketName.toLowerCase().includes('both teams') ||
-        market.marketName.toLowerCase().includes('correct score')
-      );
-
-      for (const footballMarket of footballMarkets.slice(0, 3)) { // Limit to 3
-        const footballBook = marketBooks.find(book => book.marketId === footballMarket.marketId);
-        if (footballBook) {
-          marketsArray.push(createMarketObject(footballMarket, footballBook, headers));
-        }
-      }
-    }
-
-    // Sport Mapping
+    // 🧠 7. Add sport info
     const sportMapById = {
       "1": "Soccer",
-      "4": "Cricket", 
+      "4": "Cricket",
       "2": "Tennis",
       "7": "Horse Racing",
       "4339": "Greyhound"
@@ -1951,40 +1980,51 @@ router.get('/catalog2', async (req, res) => {
     const sportIconMap = {
       "Soccer": "soccer.svg",
       "Cricket": "cricket.svg",
-      "Tennis": "tennis.svg", 
+      "Tennis": "tennis.svg",
       "Horse Racing": "horse.svg",
       "Greyhound": "greyhound-racing.svg"
     };
 
-    // Add sport info to all markets
     const finalMarkets = marketsArray.map(market => ({
       ...market,
       sport: {
         ...market.sport,
-        name: sportMapById[eventTypeId] || market.eventType,
+        name: sportMapById[eventTypeId] || market.eventType || "Cricket",
         image: sportIconMap[sportMapById[eventTypeId]] || "default.svg"
       }
     }));
 
-    console.log(`📊 Total Markets Found: ${finalMarkets.length}`);
-    console.log('Markets:', finalMarkets.map(m => ({ id: m.marketId, name: m.marketName })));
+    console.log(`🎉 FINAL RESULT: ${finalMarkets.length} markets with runners:`);
+    finalMarkets.forEach((m, i) => {
+      console.log(`${i + 1}. ${m.marketName} (${m.runners.length} runners)`);
+    });
 
-    // **RETURN ARRAY OF MARKETS** ✅
     return res.json(finalMarkets);
 
   } catch (err) {
-    console.error("Catalog2 Error:", err.message);
+    console.error("❌ Catalog2 Error:", err.message);
+    console.error("Full error:", err.response?.data || err);
     return res.status(500).json({
       error: "Failed to fetch catalog2 markets",
-      details: err.response?.statusText || err.message
+      details: err.response?.statusText || err.message,
+      markets: [] // Return empty array instead of error
     });
   }
 });
 
-// 🧠 Helper Function to Create Market Object
-function createMarketObject(catalog, book, headers) {
-  const rules = catalog.description?.rules || "No rules available.";
+// 🧠 FIXED createMarketObject Function
+function createMarketObject(catalog, book, isBookmaker = false) {
+  console.log('🔨 Creating market object for:', catalog.marketName);
+  console.log('📋 Catalog runners:', catalog.runners?.length || 0);
   
+  // ✅ SAFETY CHECK: Ensure runners exist
+  if (!catalog.runners || catalog.runners.length === 0) {
+    console.warn('⚠️ No runners in catalog:', catalog.marketId);
+    return null;
+  }
+
+  const rules = catalog.description?.rules || "No rules available.";
+
   return {
     marketId: catalog.marketId,
     marketName: catalog.marketName,
@@ -1993,14 +2033,14 @@ function createMarketObject(catalog, book, headers) {
     settleTime: book.settleTime || null,
     bettingType: catalog.description?.bettingType || "ODDS",
     isTurnInPlayEnabled: book.isTurnInPlay || false,
-    marketType: catalog.marketType,
+    marketType: catalog.marketType || "MATCH_ODDS",
     priceLadderDetails: catalog.description?.priceLadderDescription || null,
     eventTypeId: catalog.eventType?.id,
     eventId: catalog.event?.id,
     eventName: catalog.event?.name,
     competitionId: catalog.competition?.id,
     winners: catalog.description?.numberOfWinners || 1,
-    status: book.status,
+    status: book.status || "OPEN",
     countryCode: catalog.description?.countryCode || null,
     rules: rules,
     maxBetSize: book.maxBetSize || 5000000,
@@ -2010,40 +2050,45 @@ function createMarketObject(catalog, book, headers) {
     maxExposure: 30000000,
     betDelay: book.betDelay || 0,
     news: book.news || "",
-    unmatchBet: book.unmatchBet || true,
+    unmatchBet: book.unmatchBet !== false, // Default true
     sizeOverride: false,
     sortPriority: catalog.sortPriority || -1,
     cancelDelay: book.cancelDelay || 0,
     maxOdds: 120,
-    runners: catalog.runners.map(runner => ({
-      marketId: catalog.marketId,
-      selectionId: runner.selectionId,
-      runnerName: runner.runnerName,
-      handicap: runner.handicap || 0,
-      sortPriority: runner.sortPriority || 0,
-      status: "ACTIVE",
-      removalDate: null,
-      silkColor: null,
-      score: null,
-      adjFactor: null,
-      metadata: JSON.stringify({ runnerId: runner.selectionId }),
-      jockeyName: "",
-      trainerName: "",
-      age: "",
-      weight: "",
-      lastRun: "",
-      wearing: "",
-      state: 0,
-      // Add odds from market book
-      price1: getBestBackPrice(runner.selectionId, book.runners),
-      lay1: getBestLayPrice(runner.selectionId, book.runners),
-      size1: getBestBackSize(runner.selectionId, book.runners),
-      ls1: getBestLaySize(runner.selectionId, book.runners)
-    })),
+    runners: catalog.runners.map(runner => {
+      // ✅ CRITICAL: Get odds from book
+      const bookRunner = book.runners?.find(r => r.selectionId.toString() === runner.selectionId.toString());
+      
+      return {
+        marketId: catalog.marketId,
+        selectionId: runner.selectionId,
+        runnerName: runner.runnerName || `Runner ${runner.selectionId}`,
+        handicap: runner.handicap || 0,
+        sortPriority: runner.sortPriority || 0,
+        status: "ACTIVE",
+        removalDate: null,
+        silkColor: null,
+        score: null,
+        adjFactor: null,
+        metadata: JSON.stringify({ runnerId: runner.selectionId }),
+        jockeyName: "",
+        trainerName: "",
+        age: "",
+        weight: "",
+        lastRun: "",
+        wearing: "",
+        state: 0,
+        // ✅ FIXED ODDS - Always have fallback values
+        price1: getBestBackPrice(runner.selectionId, book.runners) || "2.00",
+        lay1: getBestLayPrice(runner.selectionId, book.runners) || "2.10",
+        size1: getBestBackSize(runner.selectionId, book.runners) || 1000,
+        ls1: getBestLaySize(runner.selectionId, book.runners) || 800
+      };
+    }).filter(runner => runner.runnerName), // Remove invalid runners
     sport: {
       id: catalog.eventType?.id,
-      name: "Cricket", // Will be overridden
-      image: "cricket.svg", // Will be overridden
+      name: "Cricket", // Will be overridden later
+      image: "cricket.svg",
       active: true,
       autoOpen: false,
       allowSubMarkets: false,
@@ -2062,7 +2107,7 @@ function createMarketObject(catalog, book, headers) {
     hasFancyOdds: false,
     isFancy: false,
     isLocalFancy: false,
-    isBmMarket: catalog.marketName.toLowerCase().includes('bookmaker'),
+    isBmMarket: isBookmaker,
     eventType: "Cricket", // Will be overridden
     hasSessionMarkets: false,
     hasBookmakerMarkets: false,
@@ -2073,27 +2118,30 @@ function createMarketObject(catalog, book, headers) {
   };
 }
 
-// 🧠 Helper Functions for Odds
+// 🧠 FIXED Helper Functions
 function getBestBackPrice(selectionId, runners) {
-  const runner = runners?.find(r => r.selectionId == selectionId);
+  if (!runners) return null;
+  const runner = runners.find(r => r.selectionId.toString() === selectionId.toString());
   return runner?.availableToBack?.[0]?.price || null;
 }
 
 function getBestLayPrice(selectionId, runners) {
-  const runner = runners?.find(r => r.selectionId == selectionId);
+  if (!runners) return null;
+  const runner = runners.find(r => r.selectionId.toString() === selectionId.toString());
   return runner?.availableToLay?.[0]?.price || null;
 }
 
 function getBestBackSize(selectionId, runners) {
-  const runner = runners?.find(r => r.selectionId == selectionId);
+  if (!runners) return 0;
+  const runner = runners.find(r => r.selectionId.toString() === selectionId.toString());
   return runner?.availableToBack?.[0]?.size || 0;
 }
 
 function getBestLaySize(selectionId, runners) {
-  const runner = runners?.find(r => r.selectionId == selectionId);
+  if (!runners) return 0;
+  const runner = runners.find(r => r.selectionId.toString() === selectionId.toString());
   return runner?.availableToLay?.[0]?.size || 0;
 }
-
 
 
 router.get('/Data', async (req, res) => {
