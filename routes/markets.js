@@ -402,7 +402,7 @@ router.get('/live/cricket', async (req, res) => {
           method: 'SportsAPING/v1.0/listEvents',
           params: {
             filter: {
-              eventTypeIds: ['4']
+              eventTypeIds: ['4'] // Cricket
             }
           },
           id: 1
@@ -420,24 +420,20 @@ router.get('/live/cricket', async (req, res) => {
     const events = eventsResponse.data[0]?.result || [];
     const eventIds = events.map(e => e.event.id);
 
-    // 📌 All market types required for cricket tabs
-const marketTypesNeeded = [
-  'MATCH_ODDS',
-  'TOSS_WINNER',
-  'COMPLETED_MATCH',
-  'INNINGS_RUNS',
-  'TOP_BATSMAN',
-  'TOP_BOWLER',
-  'METHOD_OF_DISMISSAL',
-  'NEXT_OVER_RUNS',
-  'NEXT_WICKET',
-  'FALL_OF_WICKET',
-  'OVER_UNDER_RUNS',
-  'ODD_OR_EVEN'
-];
+    // 📌 Only real Betfair cricket markets
+    const marketTypesNeeded = [
+      'MATCH_ODDS',
+      'TOSS_WINNER',
+      '1ST_INNINGS_RUNS',
+      '2ND_INNINGS_RUNS',
+      'INNINGS_RUN_LINE',
+      'TOP_BATSMAN',
+      'TOP_BOWLER',
+      'METHOD_OF_DISMISSAL',
+      'OVER_UNDER'
+    ];
 
-
-    // 🎯 Step 2: Fetch ALL marketTypes catalogue
+    // 🎯 Step 2: Fetch market catalogue
     const marketCatalogueResponse = await axios.post(
       'https://api.betfair.com/exchange/betting/json-rpc/v1',
       [
@@ -467,7 +463,7 @@ const marketTypesNeeded = [
     const marketCatalogues = marketCatalogueResponse.data[0]?.result || [];
     const marketIds = marketCatalogues.map(m => m.marketId);
 
-    // 🎯 Step 3: Fetch market books (odds + sizes)
+    // 🎯 Step 3: Fetch market books
     const marketBookResponse = await axios.post(
       'https://api.betfair.com/exchange/betting/json-rpc/v1',
       [
@@ -476,9 +472,7 @@ const marketTypesNeeded = [
           method: 'SportsAPING/v1.0/listMarketBook',
           params: {
             marketIds: marketIds,
-            priceProjection: {
-              priceData: ['EX_BEST_OFFERS']
-            }
+            priceProjection: { priceData: ['EX_BEST_OFFERS'] }
           },
           id: 3
         }
@@ -494,14 +488,13 @@ const marketTypesNeeded = [
 
     const marketBooks = marketBookResponse.data[0]?.result || [];
 
-    // 🔄 Step 4: Combine all markets + special MATCH_ODDS logic
+    // 🔄 Step 4: Combine markets
     const finalData = marketCatalogues.map(market => {
       const matchingBook = marketBooks.find(b => b.marketId === market.marketId);
       const event = events.find(e => e.event.id === market.event.id);
 
       const selections = market.runners.map(runner => {
         const runnerBook = matchingBook?.runners.find(r => r.selectionId === runner.selectionId);
-
         return {
           name: runner.runnerName,
           back: runnerBook?.ex?.availableToBack?.[0] || { price: '-', size: '-' },
@@ -509,9 +502,7 @@ const marketTypesNeeded = [
         };
       });
 
-      // ✔️ SPECIAL FORMAT for MATCH_ODDS only
       let odds = null;
-
       if (market.marketType === 'MATCH_ODDS') {
         odds = {
           back1: selections[0]?.back || { price: '-', size: '-' },
@@ -530,30 +521,14 @@ const marketTypesNeeded = [
         startTime: event?.event.openDate || '',
         marketStatus: matchingBook?.status || 'UNKNOWN',
         totalMatched: matchingBook?.totalMatched || 0,
-
-        // MATCH_ODDS → dedicated odds object
         odds: odds,
-
-        // other markets → selections only
         selections: market.marketType === 'MATCH_ODDS' ? undefined : selections
       };
     });
 
-    // 🎯 Step 5: Group according to your frontend tabs
-    const grouped = {
-      MatchOdds: finalData.filter(m => m.marketType === 'MATCH_ODDS'),
-      TossMarkets: finalData.filter(m => m.marketType === 'TOSS_WINNER'),
-      BookmakerMarkets: finalData.filter(m => m.marketType === 'BOOKMAKER'),
-      FancyMarkets: finalData.filter(m => m.marketType === 'ODDS'),
-      Fancy2Markets: finalData.filter(m => m.marketType === 'SESSION'),
-      FigureMarkets: finalData.filter(m => m.marketType === 'FIGURE'),
-      OddFigureMarkets: finalData.filter(m => m.marketType === 'ODD_EVEN'),
-      OtherMarkets: finalData.filter(m => m.marketType === 'OTHER')
-    };
-
     res.status(200).json({
       status: 'success',
-      data: grouped
+      data: finalData
     });
 
   } catch (err) {
