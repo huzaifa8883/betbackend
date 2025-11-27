@@ -1792,10 +1792,8 @@ const sportMap = {
 };
 router.get('/catalog2', async (req, res) => {
   try {
-    const marketId = req.query.id;
-    if (!marketId) {
-      return res.status(400).json({ error: "marketId is required in query parameters" });
-    }
+    const eventId = req.query.eventId;
+    if (!eventId) return res.status(400).json({ error: "eventId is required" });
 
     const token = await getSessionToken();
     const headers = {
@@ -1804,150 +1802,81 @@ router.get('/catalog2', async (req, res) => {
       'Content-Type': 'application/json'
     };
 
-    // 1. Get Market Catalogue
-    const catalogResponse = await axios.post(
+    // 1️⃣ Fetch all markets for this event
+    const catalogResp = await axios.post(
       'https://api.betfair.com/exchange/betting/json-rpc/v1',
       [{
         jsonrpc: "2.0",
         method: "SportsAPING/v1.0/listMarketCatalogue",
         params: {
-          filter: { marketIds: [marketId] },
-          marketProjection: [
-            "EVENT",
-            "MARKET_START_TIME",
-            "RUNNER_DESCRIPTION",
-            "COMPETITION",
-            "MARKET_DESCRIPTION",
-            "EVENT_TYPE"
-          ],
-          maxResults: "1"
+          filter: { eventIds: [eventId] },
+          marketProjection: ["EVENT", "MARKET_START_TIME", "RUNNER_DESCRIPTION", "MARKET_DESCRIPTION", "MARKET_START_TIME", "COMPETITION"],
+          maxResults: 200
         },
         id: 1
       }],
       { headers }
     );
 
-    const catalog = catalogResponse.data[0]?.result?.[0];
-    if (!catalog) return res.status(404).json({ error: "Market catalog not found" });
+    const markets = catalogResp.data[0]?.result || [];
 
-    // 2. Get Market Book (ODDS DATA)
-    const bookResponse = await axios.post(
+    // 2️⃣ Classify markets
+    const BookmakerMarkets = [];
+    const FancyMarkets = [];
+    const Fancy2Markets = [];
+    const TossMarkets = [];
+
+    markets.forEach(m => {
+      const name = m.marketName.toLowerCase();
+      if (name.includes("bookmaker")) BookmakerMarkets.push(m);
+      else if (name.includes("fancy-2")) Fancy2Markets.push(m);
+      else if (name.includes("fancy")) FancyMarkets.push(m);
+      else if (name.includes("toss")) TossMarkets.push(m);
+    });
+
+    // 3️⃣ Fetch odds for all marketIds
+    const allMarketIds = markets.map(m => m.marketId);
+    const bookResp = await axios.post(
       'https://api.betfair.com/exchange/betting/json-rpc/v1',
       [{
         jsonrpc: "2.0",
         method: "SportsAPING/v1.0/listMarketBook",
-        params: {
-          marketIds: [marketId],
-          priceProjection: { 
-            priceData: ["EX_BEST_OFFERS", "EX_BEST_BACKS", "EX_BEST_LAYS"],
-            virtualise: false 
-          }
-        },
+        params: { marketIds: allMarketIds, priceProjection: { priceData: ["EX_BEST_OFFERS"] } },
         id: 2
       }],
       { headers }
     );
 
-    const book = bookResponse.data[0]?.result?.[0];
-    if (!book) return res.status(404).json({ error: "Market book not found" });
+    const marketBooks = bookResp.data[0]?.result || [];
+    const booksMap = {};
+    marketBooks.forEach(b => { booksMap[b.marketId] = b; });
 
-    // 🚀 NEW: Create separate market arrays with odds
-    const createMarketWithOdds = (runners, marketType) => {
-      if (!book.runners || !runners) return [];
-      
-      return runners.map(runner => {
-        const bookRunner = book.runners.find(r => r.selectionId === runner.selectionId);
-        
-        return {
-          ...runner,
-          marketType,
-          // 🔥 ACTUAL ODDS DATA
-          backPrice: bookRunner?.availableToBack?.[0]?.price || 0,
-          layPrice: bookRunner?.availableToLay?.[0]?.price || 0,
-          backSize: bookRunner?.availableToBack?.[0]?.size || 0,
-          laySize: bookRunner?.availableToLay?.[0]?.size || 0,
-          lastPriceTraded: bookRunner?.lastPriceTraded || 0,
-          // Additional useful data
-          selectionId: runner.selectionId,
-          status: bookRunner?.status || "ACTIVE",
-          unmatchedBets: bookRunner?.unmatchedBets || [],
-          totalAvailable: bookRunner?.totalAvailable || 0
-        };
-      });
-    };
-
-    // 🆕 Separate Market Arrays with Real Odds
-    const bookmakerMarkets = createMarketWithOdds(catalog.runners, 'BOOKMAKER');
-    const fancyMarkets = createMarketWithOdds(catalog.runners, 'FANCY');
-    const fancy2Markets = createMarketWithOdds(catalog.runners, 'FANCY2');
-
-    // Sport mapping (same as before)
-    const eventTypeId = catalog.eventType?.id || null;
-    const sportMapById = {
-      "4": "Cricket", "2": "Tennis", "7": "Horse Racing",
-      "1": "Football", "4339": "Greyhound"
-    };
-    const sportName = sportMapById[eventTypeId] || "Unknown";
-
-    // Flags
-    const hasFancyOdds = ["Cricket", "Tennis"].includes(sportName);
-    const isFancy = hasFancyOdds;
-    const hasBookmakerMarkets = ["Cricket", "Football", "Horse Racing"].includes(sportName);
+    // 4️⃣ Attach odds to each market
+    function attachOdds(arr) {
+      return arr.map(m => ({
+        ...m,
+        runners: m.runners.map(r => ({
+          selectionId: r.selectionId,
+          runnerName: r.runnerName,
+          back: booksMap[m.marketId]?.runners.find(rn => rn.selectionId === r.selectionId)?.ex?.availableToBack || [],
+          lay: booksMap[m.marketId]?.runners.find(rn => rn.selectionId === r.selectionId)?.ex?.availableToLay || []
+        }))
+      }));
+    }
 
     const response = {
-      // Existing fields (same)
-      marketId: catalog.marketId,
-      marketName: catalog.marketName,
-      marketStartTime: catalog.marketStartTime,
-      bettingType: catalog.description?.bettingType || "ODDS",
-      eventId: catalog.event?.id,
-      eventName: catalog.event?.name,
-      runners: catalog.runners, // Original runners without odds
-      
-      // 🔥 NEW: Separate Market Arrays WITH ODDS
-      bookmakerMarkets: hasBookmakerMarkets ? bookmakerMarkets : [],
-      fancyMarkets: hasFancyOdds ? fancyMarkets : [],
-      fancy2Markets: isFancy ? fancy2Markets : [],
-      tossMarkets: [], // Add when you have toss data
-      figureMarkets: [],
-      oddFigureMarkets: [],
-      otherMarkets: [],
-
-      // Flags
-      hasBookmakerMarkets,
-      hasFancyOdds,
-      isFancy,
-      hasSessionMarkets: false,
-      
-      // Book data
-      betDelay: book.betDelay,
-      status: book.status,
-      isTurnInPlay: book.isTurnInPlay,
-      
-      // Sport info
-      sport: {
-        name: sportName,
-        image: sportName === "Cricket" ? "cricket.svg" : "default.svg",
-        active: true
-      },
-      
+      BookmakerMarkets: attachOdds(BookmakerMarkets),
+      FancyMarkets: attachOdds(FancyMarkets),
+      Fancy2Markets: attachOdds(Fancy2Markets),
+      TossMarkets: attachOdds(TossMarkets),
       updatedAt: new Date().toISOString()
     };
-
-    console.log("📊 Markets Created:", {
-      bookmakerMarkets: response.bookmakerMarkets.length,
-      fancyMarkets: response.fancyMarkets.length,
-      fancy2Markets: response.fancy2Markets.length
-    });
 
     return res.json(response);
 
   } catch (err) {
     console.error("Catalog2 Error:", err.message);
-    return res.status(500).json({
-      error: "Failed to fetch catalog2 market",
-      details: err.response?.data || err.message
-    });
+    return res.status(500).json({ error: "Failed to fetch catalog2 markets", details: err.response?.statusText || err.message });
   }
 });
 
