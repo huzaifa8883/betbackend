@@ -849,171 +849,183 @@ router.get("/event", (req, res) => {
 //   }
 // });
 // --- 1. ROUTER: PLACE BET ---
-
 router.post("/", authMiddleware(), async (req, res) => {
+  const session = client.startSession(); // MongoDB transaction
   try {
     const user = req.user;
     if (!user || user.role !== "User") {
       return res.status(403).json({ error: "Only users can place bets" });
     }
 
-    const orders = req.body;
+    let orders = req.body;
     if (!Array.isArray(orders) || orders.length === 0) {
       return res.status(400).json({ error: "Orders must be an array" });
     }
 
-    const usersCollection = getUsersCollection();
-    
-    // 1. Fetch latest user state strictly
-    const dbUser = await usersCollection.findOne({ _id: new ObjectId(user._id) });
-    if (!dbUser) return res.status(404).json({ error: "User not found" });
+    await session.withTransaction(async () => {
+      const usersCollection = getUsersCollection();
 
-    await Promise.all(
-      orders.map(async (order) => {
-        const { eventName, category } = await getEventDetailsFromBetfair(order.marketId);
-        order.event = eventName;
-        order.category = category;
-      })
-    );
+      // 1. Fetch fresh user with lock (inside transaction)
+      const dbUser = await usersCollection.findOne(
+        { _id: new ObjectId(user._id) },
+        { session }
+      );
+      if (!dbUser) throw new Error("User not found");
 
-    // 2. Normalize Orders & Calculate Required Liability
-    let totalRequiredLiability = 0;
+      // Enrich orders with event data
+      await Promise.all(
+        orders.map(async (order) => {
+          const { eventName, category } = await getEventDetailsFromBetfair(order.marketId);
+          order.event = eventName;
+          order.category = category;
+        })
+      );
 
-    const normalizedOrders = orders.map((order) => {
-      const price = parseFloat(order.price);
-      const size = parseFloat(order.size);
-      
-      // Calculate Liability for this bet
-      // BACK: Liability = Stake
-      // LAY: Liability = (Price - 1) * Stake
-      const liable = order.side === "B" ? size : (price - 1) * size;
-      
-      totalRequiredLiability += liable;
+      // 2. Normalize + calculate liability per order
+      const normalizedOrders = orders.map(order => {
+        const price = parseFloat(order.price);
+        const size = parseFloat(order.size);
+        const liability = order.side === "B" ? size : size * (price - 1);
 
-      return {
-        ...order,
-        price,
-        size,
-        liable, 
-        type: order.side === "B" ? "BACK" : "LAY",
-        position: order.side === "B" ? "BACK" : "LAY",
-        status: "PENDING",
-        matched: 0,
-        requestId: Date.now() + Math.floor(Math.random() * 100000),
-        userId: user._id,
-        created_at: new Date(),
-        updated_at: new Date(),
-      };
-    });
+        return {
+          ...order,
+          price,
+          size,
+          liability,
+          side: order.side,
+          type: order.side === "B" ? "BACK" : "LAY",
+          status: "PENDING",
+          matched: 0,
+          requestId: Date.now() + Math.floor(Math.random() * 100000),
+          userId: user._id,
+          created_at: new Date(),
+          updated_at: new Date(),
+        };
+      });
 
-    // 3. Sufficient Funds Check
-    // Rule: Available = Wallet + Current Runner Profit (Positive PnL only)
-    const walletBalance = dbUser.wallet_balance || 0;
-    
-    // Calculate total positive profit from existing runnerPnL (if any)
-    const currentRunnerProfit = Object.values(dbUser.runnerPnL || {}).reduce((sum, val) => {
-      return val > 0 ? sum + val : sum;
-    }, 0);
+      // 3. Incremental exposure simulation (CORRECT ORDERED CHECK)
+      let remainingWallet = dbUser.wallet_balance || 0;
+      let remainingLayCapacity = (dbUser.wallet_balance || 0) + (dbUser.total_unrealized_profit || 0);
 
-    const totalAvailable = walletBalance + currentRunnerProfit;
-
-  if (totalAvailable < totalRequiredLiability) {
-  // ❌ Immediately return error if user tries to bet more than available funds
-  return res.status(400).json({ error: "Insufficient funds" });
-}
-
-    // 4. Push Orders as PENDING and DEDUCT BALANCE IMMEDIATELY
-    await usersCollection.updateOne(
-      { _id: new ObjectId(user._id) },
-      {
-        $push: {
-          orders: { $each: normalizedOrders },
-          transactions: {
-            type: "BET_PLACED",
-            amount: totalRequiredLiability,
-            status: "PENDING",
-            created_at: new Date(),
-          },
-        },
-        // CRITICAL: Deduct from wallet, Add to Liability immediately
-        $inc: {
-            wallet_balance: -totalRequiredLiability,
-            liable: totalRequiredLiability
+      for (const order of normalizedOrders) {
+        if (order.side === "B") {
+          // BACK: only wallet
+          if (order.size > remainingWallet) {
+            throw new Error(`Insufficient wallet balance for back bet (need ${order.size}, have ${remainingWallet})`);
+          }
+          remainingWallet -= order.size;
+          remainingLayCapacity -= order.size; // wallet used → less for lay
+        } else {
+          // LAY: wallet + unrealized profit
+          const layLiability = order.size * (order.price - 1);
+          if (layLiability > remainingLayCapacity) {
+            throw new Error(`Insufficient funds to lay (need ${layLiability}, available ${remainingLayCapacity})`);
+          }
+          remainingLayCapacity -= layLiability;
         }
       }
-    );
 
-    // 5. Match Logic
-    let hasMatches = false;
-    const matchedUpdates = [];
+      // 4. Calculate totals for DB update
+      const totalBackStakes = normalizedOrders
+        .filter(o => o.side === "B")
+        .reduce((sum, o) => sum + o.size, 0);
 
-    for (let order of normalizedOrders) {
-      const runner = await getMarketBookFromBetfair(order.marketId, order.selectionId);
-      if (!runner) continue;
+      const totalLayLiability = normalizedOrders
+        .filter(o => o.side !== "B")
+        .reduce((sum, o) => sum + o.liability, 0);
 
-      const { matchedSize, status, executedPrice } = checkMatch(order, runner);
+      const totalPendingLiability = totalBackStakes + totalLayLiability;
 
-      if (matchedSize > 0) {
-        hasMatches = true;
-        
-        matchedUpdates.push(
+      // 5. Atomically update user (only deduct BACK stakes from wallet)
+      await usersCollection.updateOne(
+        { _id: new ObjectId(user._id) },
+        {
+          $push: {
+            orders: { $each: normalizedOrders },
+            transactions: {
+              type: "BET_PLACED",
+              amount: totalPendingLiability,
+              status: "PENDING",
+              created_at: new Date(),
+            }
+          },
+          $inc: {
+            wallet_balance: -totalBackStakes,        // Only deduct BACK stakes
+            pending_liability: totalPendingLiability // Track pending exposure
+          }
+        },
+        { session }
+      );
+
+      // 6. Try immediate matching (outside critical path, but still in transaction-safe state)
+      const matchedUpdates = [];
+      for (const order of normalizedOrders) {
+        const runner = await getMarketBookFromBetfair(order.marketId, order.selectionId);
+        if (!runner) continue;
+
+        const { matchedSize, status, executedPrice } = checkMatch(order, runner);
+        if (matchedSize > 0) {
+          matchedUpdates.push(
             usersCollection.updateOne(
-            { _id: new ObjectId(user._id), "orders.requestId": order.requestId },
-            {
-              $set: {
-                "orders.$.matched": matchedSize,
-                "orders.$.status": status,
-                "orders.$.price": executedPrice,
-                "orders.$.updated_at": new Date(),
-              },
-              $push: {
-                transactions: {
+              { _id: new ObjectId(user._id), "orders.requestId": order.requestId },
+              {
+                $set: {
+                  "orders.$.matched": matchedSize,
+                  "orders.$.status": status,
+                  "orders.$.price": executedPrice,
+                  "orders.$.updated_at": new Date(),
+                },
+                $push: {
+                  transactions: {
                     type: "BET_MATCHED",
-                    amount: 0, 
+                    amount: 0,
                     orderId: order.requestId,
                     marketId: order.marketId,
                     created_at: new Date()
+                  }
                 }
-              }
-            }
-          )
-        );
+              },
+              { session }
+            )
+          );
 
-        global.io.to("match_" + order.marketId).emit("ordersUpdated", {
-          userId: user._id,
-          newOrders: [{ ...order, matched: matchedSize, status, price: executedPrice }],
-        });
+          global.io.to("match_" + order.marketId).emit("ordersUpdated", {
+            userId: user._id,
+            newOrders: [{ ...order, matched: matchedSize, status, price: executedPrice }]
+          });
+        }
       }
-    }
 
-    if (matchedUpdates.length > 0) {
+      if (matchedUpdates.length > 0) {
         await Promise.all(matchedUpdates);
-    }
+      }
 
-    // 6. Recalculate Logic
-    // This function has been updated to handle both PENDING (simple liability) and MATCHED (green book)
-    const finalState = await recalculateUserLiableAndPnL(user._id);
+      // 7. Final recalculate (outside transaction — safe because it's read-only + eventual consistency)
+    }); // end transaction
 
-    // 7. Auto-match check (fire and forget)
-    const uniqueSelections = [
-      ...new Set(normalizedOrders.map((o) => ({ marketId: o.marketId, selectionId: o.selectionId }))),
-    ];
-    for (const { marketId, selectionId } of uniqueSelections) {
-      autoMatchPendingBets(marketId, selectionId).catch((err) =>
-        console.error("❌ Auto-match error:", err)
-      );
+    // After transaction: recalculate exposure (fire and forget)
+    recalculateUserLiableAndPnL(user._id).catch(console.error);
+
+    // Auto-match pending bets
+    const uniqueKeys = new Set(
+      normalizedOrders.map(o => `${o.marketId}_${o.selectionId}`)
+    );
+    for (const key of uniqueKeys) {
+      const [marketId, selectionId] = key.split("_");
+      autoMatchPendingBets(marketId, selectionId).catch(console.error);
     }
 
     res.status(200).json({
-      message: "Bet placed successfully",
-      orders: normalizedOrders,
-      wallet: finalState ? finalState.wallet_balance : (walletBalance - totalRequiredLiability),
-      liability: finalState ? finalState.liable : (dbUser.liable + totalRequiredLiability)
+      message: "Bets placed successfully",
+      count: orders.length,
+      deducted_from_wallet: totalBackStakes
     });
 
   } catch (err) {
-    console.error("❌ Bet place error:", err);
-    res.status(500).json({ error: err.message });
+    console.error("Bet placement failed:", err.message);
+    res.status(400).json({ error: err.message || "Insufficient funds or invalid bet" });
+  } finally {
+    await session.endSession();
   }
 });
 
