@@ -2014,7 +2014,30 @@ router.get('/catalog2', async (req, res) => {
       marketName: mainCatalogEntry.marketName,
       marketStartTime: mainCatalogEntry.marketStartTime,
       status: mainCatalogEntry.status,
-      runners: mainCatalogEntry.runners,
+      runners: catalog.runners.map(runner => {
+        const runnerBook = book.runners.find(r => r.selectionId === runner.selectionId);
+        return {
+          marketId: catalog.marketId,
+          selectionId: runner.selectionId,
+          runnerName: runner.runnerName,
+          handicap: runner.handicap,
+          sortPriority: runner.sortPriority,
+          status: "ACTIVE",
+          removalDate: null,
+          silkColor: "",
+          score: null,
+          adjFactor: null,
+          metadata: JSON.stringify({ runnerId: runner.selectionId }),
+          jockeyName: "",
+          trainerName: "",
+          age: "",
+          weight: "",
+          lastRun: "",
+          wearing: "",
+          state: 0,
+          odds: runnerBook?.ex || null
+        };
+      }),
       
       // Event Metadata
       eventTypeId: eventTypeId,
