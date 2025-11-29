@@ -2008,37 +2008,42 @@ router.get('/catalog2', async (req, res) => {
     // ==================================================================
     // 7️⃣ Final Response Construction
     // ==================================================================
+    
+   const book = allBooks.find(b => b.marketId === mainCatalogEntry.marketId);
+
+const runners = mainCatalogEntry.runners.map(runner => {
+  const runnerBook = book?.runners.find(r => r.selectionId === runner.selectionId);
+  return {
+    marketId: mainCatalogEntry.marketId,
+    selectionId: runner.selectionId,
+    runnerName: runner.runnerName,
+    handicap: runner.handicap,
+    sortPriority: runner.sortPriority || 0,
+    status: runnerBook?.status || "ACTIVE",
+    removalDate: null,
+    silkColor: "",
+    score: null,
+    adjFactor: null,
+    metadata: JSON.stringify({ runnerId: runner.selectionId }),
+    jockeyName: "",
+    trainerName: "",
+    age: "",
+    weight: "",
+    lastRun: "",
+    wearing: "",
+    state: 0,
+    odds: runnerBook?.ex || null
+  };
+});
+      
     const response = {
       // Root properties (Backwards compatibility for Main Market)
       marketId: mainCatalogEntry.marketId,
       marketName: mainCatalogEntry.marketName,
       marketStartTime: mainCatalogEntry.marketStartTime,
       status: mainCatalogEntry.status,
-      runners: catalog.runners.map(runner => {
-        const runnerBook = book.runners.find(r => r.selectionId === runner.selectionId);
-        return {
-          marketId: catalog.marketId,
-          selectionId: runner.selectionId,
-          runnerName: runner.runnerName,
-          handicap: runner.handicap,
-          sortPriority: runner.sortPriority,
-          status: "ACTIVE",
-          removalDate: null,
-          silkColor: "",
-          score: null,
-          adjFactor: null,
-          metadata: JSON.stringify({ runnerId: runner.selectionId }),
-          jockeyName: "",
-          trainerName: "",
-          age: "",
-          weight: "",
-          lastRun: "",
-          wearing: "",
-          state: 0,
-          odds: runnerBook?.ex || null
-        };
-      }),
-      
+      runners: runners,
+
       // Event Metadata
       eventTypeId: eventTypeId,
       eventType: sportName,
