@@ -1879,7 +1879,7 @@ router.get('/catalog2', async (req, res) => {
       "7": "Horse Racing",
       "4339": "Greyhound",
     };
-    
+      
     const sportName = sportMapById[eventTypeId] || initialMarket.eventType?.name || "Unknown";
     const sportIconMap = {
       "Cricket": "cricket.svg",
@@ -1892,15 +1892,17 @@ router.get('/catalog2', async (req, res) => {
     const sportIcon = sportIconMap[sportName] || "default.svg";
 
     // ==================================================================
-    // 5️⃣ Helper: Map Betfair Data to Frontend Structure
+    // 5️⃣ Helper: Map Betfair Data to Frontend Structure (MODIFIED)
     // ==================================================================
-    const mapMarketData = (catalogItem, bookItem) => {
+    const mapMarketData = (catalogItem, bookItem, currentEventTypeId) => {
       if (!bookItem) return null;
-      
+        
       return {
         marketId: catalogItem.marketId,
         marketName: catalogItem.marketName,
         marketType: catalogItem.description?.marketType,
+        eventTypeId: currentEventTypeId, // <--- ADDED: eventTypeId
+        bettingType: catalogItem.description?.bettingType || null, // <--- ADDED: bettingType
         status: bookItem.status,
         totalMatched: bookItem.totalMatched,
         marketStartTime: catalogItem.marketStartTime,
@@ -1920,24 +1922,32 @@ router.get('/catalog2', async (req, res) => {
     // ==================================================================
     // 6️⃣ Categorization Logic
     // ==================================================================
-    
+      
     // Initialize Arrays
     const marketGroups = {
       Catalog: [], // This will usually hold Match Odds
       BookmakerMarkets: [],
       TossMarkets: [],
       FancyMarkets: [], // For "Line" or "Over/Under" in Cricket
+      Fancy2Markets: [], // Added for completeness based on required market types
+      FigureMarkets: [], // Added for completeness based on required market types
+      OddFigureMarkets: [], // Added for completeness based on required market types
       OtherMarkets: [], // For Football O/U, Tennis Sets, etc.
-      FigureMarkets: [],
-      OddFigureMarkets: [],
-      Fancy2Markets: []
     };
+
+    // Keep track of all markets for the subMarkets array
+    const allProcessedMarkets = []; // <--- NEW ARRAY
 
     allMarkets.forEach(cat => {
       const book = allBooks.find(b => b.marketId === cat.marketId);
       if (!book) return; // Skip if no book data
 
-      const mappedMarket = mapMarketData(cat, book);
+      // Use the modified mapMarketData helper
+      const mappedMarket = mapMarketData(cat, book, eventTypeId); // Pass eventTypeId
+      
+      // Add to the new flat array
+      allProcessedMarkets.push(mappedMarket); // <--- ADD TO FLAT ARRAY
+      
       const mType = cat.description?.marketType || "";
       const mName = cat.marketName.toLowerCase();
 
@@ -1945,7 +1955,7 @@ router.get('/catalog2', async (req, res) => {
       if (sportName === "Cricket") {
         if (mType === "MATCH_ODDS") {
           marketGroups.Catalog.push(mappedMarket);
-        } 
+        }  
         else if (mName.includes("bookmaker") || mType === "BOOKMAKER") {
           marketGroups.BookmakerMarkets.push(mappedMarket);
         }
@@ -1955,18 +1965,25 @@ router.get('/catalog2', async (req, res) => {
         else if (mName.includes("innings") || mName.includes("over") || mName.includes("runs")) {
           // Categorize typical Fancy/Line markets
           marketGroups.FancyMarkets.push(mappedMarket);
-        } 
+        }  
+        // Add specific logic for new market types if needed, or they fall to OtherMarkets
+        else if (mName.includes("figure")) {
+          marketGroups.FigureMarkets.push(mappedMarket);
+        }
+        else if (mName.includes("odd figure")) {
+          marketGroups.OddFigureMarkets.push(mappedMarket);
+        }
         else {
           marketGroups.OtherMarkets.push(mappedMarket);
         }
-      } 
+      }  
       // --- FOOTBALL LOGIC ---
       else if (sportName === "Football") {
         if (mType === "MATCH_ODDS") {
           marketGroups.Catalog.push(mappedMarket);
         }
         else if (mType.includes("OVER_UNDER") || mName.includes("over/under")) {
-          marketGroups.OtherMarkets.push(mappedMarket); // Or create a specific OverUnderMarkets array if frontend supports it
+          marketGroups.OtherMarkets.push(mappedMarket); 
         }
         else if (mType.includes("CORRECT_SCORE")) {
           marketGroups.OtherMarkets.push(mappedMarket);
@@ -1992,50 +2009,60 @@ router.get('/catalog2', async (req, res) => {
         if (mType === "MATCH_ODDS") marketGroups.Catalog.push(mappedMarket);
         else marketGroups.OtherMarkets.push(mappedMarket);
       }
+      // Note: For types like Fancy2Markets, FigureMarkets, etc. that aren't
+      // explicitly categorized above, they will not populate the separate
+      // arrays, but they WILL be in the subMarkets array. If you need 
+      // them populated, you'd need more specific categorization logic here.
     });
 
     // Ensure the main requested market is present in the root response details.
-    // If the loop put the main market in 'Catalog', we find it there, otherwise we use the initial fetch.
-    const mainCatalogEntry = marketGroups.Catalog.find(m => m.marketId === marketId) || 
-                             marketGroups.BookmakerMarkets.find(m => m.marketId === marketId) ||
-                             mapMarketData(initialMarket, allBooks.find(b => b.marketId === marketId));
-
+    // Use the allProcessedMarkets array to find the main entry for consistency
+    const mainCatalogEntry = allProcessedMarkets.find(m => m.marketId === marketId);
+    
+    // Fallback if the main market wasn't processed (e.g. no book data)
     if (!mainCatalogEntry) {
-        // Edge case: Requested market ID is valid but somehow filtered out or rules failed
-        return res.status(500).json({ error: "Failed to process main market data" });
+      const initialBook = allBooks.find(b => b.marketId === marketId);
+      if (!initialBook) return res.status(404).json({ error: "Market found, but no book data available." });
+
+      const mappedInitialMarket = mapMarketData(initialMarket, initialBook, eventTypeId);
+      if (!mappedInitialMarket) return res.status(500).json({ error: "Failed to process main market data" });
+      
+      // If found via fallback, add to the flat list for completeness, but it's not strictly necessary for the final response as mainCatalogEntry is defined later.
+      // However, we redefine mainCatalogEntry for the rest of the logic.
+      mainCatalogEntry = mappedInitialMarket; 
     }
 
     // ==================================================================
-    // 7️⃣ Final Response Construction
+    // 7️⃣ Final Response Construction (MODIFIED)
     // ==================================================================
-    
-   const book = allBooks.find(b => b.marketId === mainCatalogEntry.marketId);
-
-const runners = mainCatalogEntry.runners.map(runner => {
-  const runnerBook = book?.runners.find(r => r.selectionId === runner.selectionId);
-  return {
-    marketId: mainCatalogEntry.marketId,
-    selectionId: runner.selectionId,
-    runnerName: runner.runnerName,
-    handicap: runner.handicap,
-    sortPriority: runner.sortPriority || 0,
-    status: runnerBook?.status || "ACTIVE",
-    removalDate: null,
-    silkColor: "",
-    score: null,
-    adjFactor: null,
-    metadata: JSON.stringify({ runnerId: runner.selectionId }),
-    jockeyName: "",
-    trainerName: "",
-    age: "",
-    weight: "",
-    lastRun: "",
-    wearing: "",
-    state: 0,
-    odds: runnerBook?.ex || null
-  };
-});
       
+    const book = allBooks.find(b => b.marketId === mainCatalogEntry.marketId);
+
+    const runners = mainCatalogEntry.runners.map(runner => {
+      const runnerBook = book?.runners.find(r => r.selectionId === runner.selectionId);
+      return {
+        marketId: mainCatalogEntry.marketId,
+        selectionId: runner.selectionId,
+        runnerName: runner.runnerName,
+        handicap: runner.handicap,
+        sortPriority: runner.sortPriority || 0,
+        status: runnerBook?.status || "ACTIVE",
+        removalDate: null,
+        silkColor: "",
+        score: null,
+        adjFactor: null,
+        metadata: JSON.stringify({ runnerId: runner.selectionId }),
+        jockeyName: "",
+        trainerName: "",
+        age: "",
+        weight: "",
+        lastRun: "",
+        wearing: "",
+        state: 0,
+        odds: runnerBook?.ex || null
+      };
+    });
+        
     const response = {
       // Root properties (Backwards compatibility for Main Market)
       marketId: mainCatalogEntry.marketId,
@@ -2051,7 +2078,7 @@ const runners = mainCatalogEntry.runners.map(runner => {
       eventName: initialMarket.event?.name,
       competitionId: initialMarket.competition?.id,
       competitionName: initialMarket.competition?.name,
-      
+        
       // Sport UI
       sport: {
         name: sportName,
@@ -2063,8 +2090,8 @@ const runners = mainCatalogEntry.runners.map(runner => {
       isBmMarket: marketGroups.BookmakerMarkets.length > 0,
       hasBookmakerMarkets: marketGroups.BookmakerMarkets.length > 0,
       hasFancyOdds: marketGroups.FancyMarkets.length > 0,
-      
-      // 🟢 The Dynamic Arrays (Vue v-if targets)
+        
+      // 🟢 The Dynamic Arrays (Backwards Compatibility)
       Catalog: marketGroups.Catalog, // Main Match Odds usually go here
       BookmakerMarkets: marketGroups.BookmakerMarkets,
       TossMarkets: marketGroups.TossMarkets,
@@ -2073,7 +2100,10 @@ const runners = mainCatalogEntry.runners.map(runner => {
       FigureMarkets: marketGroups.FigureMarkets,
       OddFigureMarkets: marketGroups.OddFigureMarkets,
       OtherMarkets: marketGroups.OtherMarkets,
-      OtherRaceMarkets: [], // Empty unless you have specific Racing logic
+      OtherRaceMarkets: [], 
+      
+      // 🌟 NEW: The subMarkets array
+      subMarkets: allProcessedMarkets, // <--- THE NEW FLAT ARRAY
 
       updatedAt: new Date().toISOString(),
       state: 0
