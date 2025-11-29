@@ -1929,14 +1929,17 @@ router.get('/catalog2', async (req, res) => {
       BookmakerMarkets: [],
       TossMarkets: [],
       FancyMarkets: [], // For "Line" or "Over/Under" in Cricket
-      Fancy2Markets: [], // Added for completeness based on required market types
-      FigureMarkets: [], // Added for completeness based on required market types
-      OddFigureMarkets: [], // Added for completeness based on required market types
+      Fancy2Markets: [], // Added for completeness
+      FigureMarkets: [], // Added for completeness
+      OddFigureMarkets: [], // Added for completeness
       OtherMarkets: [], // For Football O/U, Tennis Sets, etc.
+      OtherRaceMarkets: [], // Added for completeness
     };
 
-    // Keep track of all markets for the subMarkets array
-    const allProcessedMarkets = []; // <--- NEW ARRAY
+    // Keep track of all markets for the subMarkets array (since some markets might
+    // not fall into specific groups but should be in the final list)
+    // NOTE: allProcessedMarkets is now redundant if we spread all marketGroups
+    // const allProcessedMarkets = []; 
 
     allMarkets.forEach(cat => {
       const book = allBooks.find(b => b.marketId === cat.marketId);
@@ -1945,8 +1948,8 @@ router.get('/catalog2', async (req, res) => {
       // Use the modified mapMarketData helper
       const mappedMarket = mapMarketData(cat, book, eventTypeId); // Pass eventTypeId
       
-      // Add to the new flat array
-      allProcessedMarkets.push(mappedMarket); // <--- ADD TO FLAT ARRAY
+      // We rely on the Categorization Logic below to populate the marketGroups
+      // then spread them all out into subMarkets later.
       
       const mType = cat.description?.marketType || "";
       const mName = cat.marketName.toLowerCase();
@@ -1966,8 +1969,8 @@ router.get('/catalog2', async (req, res) => {
           // Categorize typical Fancy/Line markets
           marketGroups.FancyMarkets.push(mappedMarket);
         }  
-        // Add specific logic for new market types if needed, or they fall to OtherMarkets
-        else if (mName.includes("figure")) {
+        // Add specific logic for new market types
+        else if (mName.includes("figure") && !mName.includes("odd figure")) {
           marketGroups.FigureMarkets.push(mappedMarket);
         }
         else if (mName.includes("odd figure")) {
@@ -2009,15 +2012,24 @@ router.get('/catalog2', async (req, res) => {
         if (mType === "MATCH_ODDS") marketGroups.Catalog.push(mappedMarket);
         else marketGroups.OtherMarkets.push(mappedMarket);
       }
-      // Note: For types like Fancy2Markets, FigureMarkets, etc. that aren't
-      // explicitly categorized above, they will not populate the separate
-      // arrays, but they WILL be in the subMarkets array. If you need 
-      // them populated, you'd need more specific categorization logic here.
     });
 
-    // Ensure the main requested market is present in the root response details.
-    // Use the allProcessedMarkets array to find the main entry for consistency
-    const mainCatalogEntry = allProcessedMarkets.find(m => m.marketId === marketId);
+    // We must collect *all* markets processed, regardless of their group, to ensure
+    // the main market is present if it wasn't already in Catalog or BookmakerMarkets
+    const allProcessedMarkets = [
+      ...marketGroups.Catalog,
+      ...marketGroups.BookmakerMarkets,
+      ...marketGroups.TossMarkets,
+      ...marketGroups.FancyMarkets,
+      ...marketGroups.Fancy2Markets,
+      ...marketGroups.FigureMarkets,
+      ...marketGroups.OddFigureMarkets,
+      ...marketGroups.OtherMarkets,
+      ...marketGroups.OtherRaceMarkets
+    ];
+    
+    // Find the main market from the complete list
+    let mainCatalogEntry = allProcessedMarkets.find(m => m.marketId === marketId);
     
     // Fallback if the main market wasn't processed (e.g. no book data)
     if (!mainCatalogEntry) {
@@ -2027,8 +2039,6 @@ router.get('/catalog2', async (req, res) => {
       const mappedInitialMarket = mapMarketData(initialMarket, initialBook, eventTypeId);
       if (!mappedInitialMarket) return res.status(500).json({ error: "Failed to process main market data" });
       
-      // If found via fallback, add to the flat list for completeness, but it's not strictly necessary for the final response as mainCatalogEntry is defined later.
-      // However, we redefine mainCatalogEntry for the rest of the logic.
       mainCatalogEntry = mappedInitialMarket; 
     }
 
@@ -2063,6 +2073,18 @@ router.get('/catalog2', async (req, res) => {
       };
     });
         
+    const subMarkets = [ // 👈 Defining subMarkets with the suggested spread syntax
+      ...marketGroups.Catalog,
+      ...marketGroups.BookmakerMarkets,
+      ...marketGroups.TossMarkets,
+      ...marketGroups.FancyMarkets,
+      ...marketGroups.Fancy2Markets,
+      ...marketGroups.FigureMarkets,
+      ...marketGroups.OddFigureMarkets,
+      ...marketGroups.OtherMarkets,
+      ...marketGroups.OtherRaceMarkets
+    ];
+
     const response = {
       // Root properties (Backwards compatibility for Main Market)
       marketId: mainCatalogEntry.marketId,
@@ -2092,7 +2114,7 @@ router.get('/catalog2', async (req, res) => {
       hasFancyOdds: marketGroups.FancyMarkets.length > 0,
         
       // 🟢 The Dynamic Arrays (Backwards Compatibility)
-      Catalog: marketGroups.Catalog, // Main Match Odds usually go here
+      Catalog: marketGroups.Catalog, 
       BookmakerMarkets: marketGroups.BookmakerMarkets,
       TossMarkets: marketGroups.TossMarkets,
       FancyMarkets: marketGroups.FancyMarkets,
@@ -2100,10 +2122,10 @@ router.get('/catalog2', async (req, res) => {
       FigureMarkets: marketGroups.FigureMarkets,
       OddFigureMarkets: marketGroups.OddFigureMarkets,
       OtherMarkets: marketGroups.OtherMarkets,
-      OtherRaceMarkets: [], 
+      OtherRaceMarkets: marketGroups.OtherRaceMarkets, // Now uses the initialized group
       
       // 🌟 NEW: The subMarkets array
-      subMarkets: allProcessedMarkets, // <--- THE NEW FLAT ARRAY
+      subMarkets: subMarkets, // 👈 Using the flattened array
 
       updatedAt: new Date().toISOString(),
       state: 0
