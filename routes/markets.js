@@ -2111,7 +2111,7 @@ router.get('/Data', async (req, res) => {
       'Content-Type': 'application/json'
     };
 
-    // Step 1: Get runners info from MarketCatalogue
+    // MarketCatalogue se runner names
     const catalogRes = await axios.post(
       'https://api.betfair.com/exchange/betting/json-rpc/v1',
       [{
@@ -2126,8 +2126,8 @@ router.get('/Data', async (req, res) => {
       }],
       { headers }
     );
+
     const catalog = catalogRes.data[0]?.result?.[0];
-    // Map: selectionId => runnerName
     const runnerMap = {};
     if (catalog && catalog.runners) {
       catalog.runners.forEach(r => {
@@ -2135,7 +2135,7 @@ router.get('/Data', async (req, res) => {
       });
     }
 
-    // Step 2: Get MarketBook (odds)
+    // MarketBook (odds) fetch
     const bookResponse = await axios.post(
       'https://api.betfair.com/exchange/betting/json-rpc/v1',
       [{
@@ -2152,6 +2152,7 @@ router.get('/Data', async (req, res) => {
 
     const bfBook = bookResponse.data[0]?.result;
     let marketBooks = [];
+
     if (bfBook && bfBook.length) {
       marketBooks = bfBook.map(book => ({
         id: book.marketId,
@@ -2163,8 +2164,8 @@ router.get('/Data', async (req, res) => {
         bettingAllowed: true,
         isMarketDataDelayed: book.isMarketDataDelayed,
         runners: book.runners.map(runner => ({
-          id: runner.selectionId,
-          name: runnerMap[runner.selectionId] || '', // Yeh runner ka naam hai (frontend ke liye zaroori!)
+          id: runner.selectionId.toString(),
+          name: runnerMap[runner.selectionId] || '',  // har runner ka naam
           price1: runner.ex.availableToBack?.[0]?.price || 0,
           price2: runner.ex.availableToBack?.[1]?.price || 0,
           price3: runner.ex.availableToBack?.[2]?.price || 0,
@@ -2178,7 +2179,7 @@ router.get('/Data', async (req, res) => {
           ls2: runner.ex.availableToLay?.[1]?.size || 0,
           ls3: runner.ex.availableToLay?.[2]?.size || 0,
           status: runner.status,
-          handicap: runner.handicap
+          handicap: runner.handicap || 0
         })),
         isRoot: false,
         timestamp: book.lastMatchTime || "0001-01-01T00:00:00",
@@ -2186,10 +2187,20 @@ router.get('/Data', async (req, res) => {
       }));
     }
 
+    // Scores data (optional)
+    const scores = {
+      home: catalog?.runners?.[0]?.runnerName || "",
+      away: catalog?.runners?.[1]?.runnerName || "",
+      currentSet: 0,
+      runs: [],
+      wickets: []
+    };
+
     res.json({
       requestId: uuidv4(),
       marketBooks,
-      news: ""
+      news: "",
+      scores
     });
 
   } catch (err) {
@@ -2201,6 +2212,7 @@ router.get('/Data', async (req, res) => {
     });
   }
 });
+
 router.get('/Navigation', async (req, res) => {
   const id = req.query.id || "0";
   const type = parseInt(req.query.type || "0", 10);
