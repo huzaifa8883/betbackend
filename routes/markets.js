@@ -1966,7 +1966,7 @@ router.get('/catalog2', async (req, res) => {
         });
 
         const subMarkets = [
-            ...marketGroups.Catalog,
+            // ...marketGroups.Catalog,
             ...marketGroups.BookmakerMarkets,
             ...marketGroups.TossMarkets,
             ...marketGroups.FancyMarkets,
