@@ -1806,17 +1806,23 @@ router.get('/catalog2', async (req, res) => {
             'Content-Type': 'application/json'
         };
 
-        // ==================================================================
-        // 1️⃣ Discovery: Get the requested market to find the Event ID
-        // ==================================================================
-        const initialResponse = await axios.post(
-            'https://api.betfair.com/exchange/betting/json-rpc/v1',
+        // ------------------------------------------------------------
+        // 1) Fetch initial catalog (needed to get eventId)
+        // ------------------------------------------------------------
+        const initial = await axios.post(
+            "https://api.betfair.com/exchange/betting/json-rpc/v1",
             [{
                 jsonrpc: "2.0",
                 method: "SportsAPING/v1.0/listMarketCatalogue",
                 params: {
                     filter: { marketIds: [marketId] },
-                    marketProjection: ["EVENT", "EVENT_TYPE", "MARKET_DESCRIPTION", "RUNNER_DESCRIPTION", "COMPETITION"],
+                    marketProjection: [
+                        "EVENT",
+                        "EVENT_TYPE",
+                        "MARKET_DESCRIPTION",
+                        "RUNNER_DESCRIPTION",
+                        "COMPETITION"
+                    ],
                     maxResults: 1
                 },
                 id: 1
@@ -1824,39 +1830,43 @@ router.get('/catalog2', async (req, res) => {
             { headers }
         );
 
-        const initialMarket = initialResponse.data[0]?.result?.[0];
+        const initialMarket = initial.data[0]?.result?.[0];
         if (!initialMarket) return res.status(404).json({ error: "Market not found" });
 
         const eventId = initialMarket.event?.id;
         const eventTypeId = initialMarket.eventType?.id;
-        if (!eventId) return res.status(404).json({ error: "Event ID not found for this market" });
 
-        // ==================================================================
-        // 2️⃣ Expansion: Fetch ALL markets for this Event
-        // ==================================================================
-        const allMarketsResponse = await axios.post(
-            'https://api.betfair.com/exchange/betting/json-rpc/v1',
+        // ------------------------------------------------------------
+        // 2) Fetch ALL markets for this event
+        // ------------------------------------------------------------
+        const catRes = await axios.post(
+            "https://api.betfair.com/exchange/betting/json-rpc/v1",
             [{
                 jsonrpc: "2.0",
                 method: "SportsAPING/v1.0/listMarketCatalogue",
                 params: {
-                    filter: { eventIds: [eventId] }, // Get everything for this match
-                    marketProjection: ["MARKET_START_TIME", "RUNNER_DESCRIPTION", "MARKET_DESCRIPTION", "EVENT_TYPE"],
-                    maxResults: 50 // Limit to 50 markets per event to prevent overload
+                    filter: { eventIds: [eventId] },
+                    marketProjection: [
+                        "MARKET_START_TIME",
+                        "RUNNER_DESCRIPTION",
+                        "MARKET_DESCRIPTION",
+                        "EVENT_TYPE"
+                    ],
+                    maxResults: 100
                 },
                 id: 2
             }],
             { headers }
         );
 
-        const allMarkets = allMarketsResponse.data[0]?.result || [];
-        const allMarketIds = allMarkets.map(m => m.marketId);
+        const allCatalog = catRes.data[0]?.result || [];
+        const allMarketIds = allCatalog.map(m => m.marketId);
 
-        // ==================================================================
-        // 3️⃣ Pricing: Get Market Book (Odds) for ALL found markets
-        // ==================================================================
-        const booksResponse = await axios.post(
-            'https://api.betfair.com/exchange/betting/json-rpc/v1',
+        // ------------------------------------------------------------
+        // 3) Fetch ALL books (prices)
+        // ------------------------------------------------------------
+        const booksRes = await axios.post(
+            "https://api.betfair.com/exchange/betting/json-rpc/v1",
             [{
                 jsonrpc: "2.0",
                 method: "SportsAPING/v1.0/listMarketBook",
@@ -1869,206 +1879,72 @@ router.get('/catalog2', async (req, res) => {
             { headers }
         );
 
-        const allBooks = booksResponse.data[0]?.result || [];
+        const allBooks = booksRes.data[0]?.result || [];
 
-        // ==================================================================
-        // 4️⃣ Sport & UI Metadata Setup
-        // ==================================================================
-        const sportMapById = {
-            "4": "Cricket",
-            "2": "Tennis",
-            "1": "Football",
-            "7": "Horse Racing",
-            "4339": "Greyhound",
-        };
+        // ------------------------------------------------------------
+        // 4) Map market into frontend structure
+        // ------------------------------------------------------------
+        const mapMarket = (cat, book) => {
+            if (!book) return null;
 
-        const sportName = sportMapById[eventTypeId] || initialMarket.eventType?.name || "Unknown";
-        const sportIconMap = {
-            "Cricket": "cricket.svg",
-            "Tennis": "tennis.svg",
-            "Football": "soccer.svg",
-            "Horse Racing": "horse.svg",
-            "Greyhound": "greyhound-racing.svg",
-            "Unknown": "default.svg"
-        };
-        const sportIcon = sportIconMap[sportName] || "default.svg";
-
-        // ==================================================================
-        // 5️⃣ Helper: Map Betfair Data to Frontend Structure 
-        // ==================================================================
-        const mapMarketData = (catalogItem, bookItem, currentEventTypeId) => {
-            if (!bookItem) return null;
-
-            // Extract odds information for simplified runner structure
-            const mapOdds = (runnerBook) => {
-                if (!runnerBook || !runnerBook.ex) return null;
-
-                const getPrice = (side, index) => runnerBook.ex[side]?.[index]?.price || null;
-                const getSize = (side, index) => runnerBook.ex[side]?.[index]?.size || null;
-
-                // Structure matches the required runner format for the frontend
-                return {
-                    price1: getPrice('availableToBack', 0),
-                    size1: getSize('availableToBack', 0),
-                    price2: getPrice('availableToBack', 1),
-                    size2: getSize('availableToBack', 1),
-                    price3: getPrice('availableToBack', 2),
-                    size3: getSize('availableToBack', 2),
-                    lay1: getPrice('availableToLay', 0),
-                    laySize1: getSize('availableToLay', 0),
-                    lay2: getPrice('availableToLay', 1),
-                    laySize2: getSize('availableToLay', 1),
-                    lay3: getPrice('availableToLay', 2),
-                    laySize3: getSize('availableToLay', 2),
-                };
-            };
-            
             return {
-                marketId: catalogItem.marketId,
-                marketName: catalogItem.marketName,
-                // Crucial fields for frontend filtering (Requirement 5)
-                marketType: catalogItem.description?.marketType || null,
-                bettingType: catalogItem.description?.bettingType || null,
-                eventTypeId: currentEventTypeId,
-                
-                status: bookItem.status,
-                totalMatched: bookItem.totalMatched,
-                marketStartTime: catalogItem.marketStartTime,
-                
-                runners: catalogItem.runners.map(runner => {
-                    const runnerBook = allBooks.find(b => b.marketId === catalogItem.marketId)
-                                            ?.runners.find(r => r.selectionId === runner.selectionId);
-                    
+                marketId: cat.marketId,
+                marketName: cat.marketName,
+                marketType: cat.description?.marketType,
+                bettingType: cat.description?.bettingType || null,
+                eventTypeId: eventTypeId,
+                status: book.status,
+                totalMatched: book.totalMatched,
+                marketStartTime: cat.marketStartTime,
+
+                runners: cat.runners.map(r => {
+                    const rb = book.runners.find(b => b.selectionId === r.selectionId);
+
                     return {
-                        selectionId: runner.selectionId,
-                        runnerName: runner.runnerName,
-                        handicap: runner.handicap,
-                        status: runnerBook?.status || "ACTIVE",
-                        // Merged odds fields (Requirement 3)
-                        odds: mapOdds(runnerBook),
-                        // Add other required runner fields
-                        sortPriority: runner.sortPriority || 0,
-                        metadata: JSON.stringify({ runnerId: runner.selectionId }),
-                        // ... other fields (age, weight, etc.) can be added here if needed
+                        selectionId: r.selectionId,
+                        runnerName: r.runnerName,
+                        handicap: r.handicap,
+                        status: rb?.status || "ACTIVE",
+                        odds: rb?.ex || null
                     };
                 })
             };
         };
 
-        // ==================================================================
-        // 6️⃣ Categorization & Merging Logic (Preparing the final subMarkets array)
-        // ==================================================================
-        
-        // This will hold ALL mapped market objects
-        const allMappedMarkets = [];
-        
-        // This will hold the main market entry separately
-        let mainCatalogEntry = null;
+        // ------------------------------------------------------------
+        // 5) Build subMarkets (the ONLY final markets array)
+        // ------------------------------------------------------------
+        const subMarkets = [];
 
-        allMarkets.forEach(cat => {
+        for (const cat of allCatalog) {
             const book = allBooks.find(b => b.marketId === cat.marketId);
-            if (!book) return; // Skip if no book data
+            if (!book) continue;
 
-            const mappedMarket = mapMarketData(cat, book, eventTypeId);
-            if (!mappedMarket) return;
-            
-            // Add the market to the unified list
-            allMappedMarkets.push(mappedMarket);
-
-            // Identify the main requested market (Catalog)
-            if (cat.marketId === marketId) {
-                mainCatalogEntry = mappedMarket;
-            }
-        });
-        
-        // Fallback: If the requested market wasn't in the list (e.g., failed to fetch), use initialMarket data
-        if (!mainCatalogEntry) {
-            const initialBook = allBooks.find(b => b.marketId === marketId);
-            if (initialMarket && initialBook) {
-                 mainCatalogEntry = mapMarketData(initialMarket, initialBook, eventTypeId);
-                 if (mainCatalogEntry) {
-                     // If found via fallback, ensure it's in the list (though technically, the original
-                     // market was already asked in the initial call, this protects against edge cases)
-                     if (!allMappedMarkets.find(m => m.marketId === marketId)) {
-                        allMappedMarkets.push(mainCatalogEntry);
-                     }
-                 }
-            }
+            const mapped = mapMarket(cat, book);
+            if (mapped) subMarkets.push(mapped);
         }
-        
-        if (!mainCatalogEntry) return res.status(404).json({ error: "Main Market ID found, but market or book data could not be processed." });
 
+        // Find catalog market
+        const catalogMarket = subMarkets.find(m => m.marketId === marketId);
 
-        // The main catalog entry's runners need to be restructured slightly for the root level response
-        // if the frontend expects a flat runner array (not nested under 'odds')
-        const mainRunners = mainCatalogEntry.runners.map(r => ({
-            marketId: mainCatalogEntry.marketId,
-            selectionId: r.selectionId,
-            runnerName: r.runnerName,
-            handicap: r.handicap,
-            sortPriority: r.sortPriority || 0,
-            status: r.status,
-            // Spread the odds directly into the runner object for the root response
-            ...r.odds, 
-            // Add required dummy fields from original structure (if needed)
-            removalDate: null,
-            silkColor: "",
-            score: null,
-            adjFactor: null,
-            metadata: JSON.stringify({ runnerId: r.selectionId }),
-            jockeyName: "",
-            trainerName: "",
-            age: "",
-            weight: "",
-            lastRun: "",
-            wearing: "",
-            state: 0,
-        }));
-
-
-        // ==================================================================
-        // 7️⃣ Final Response Construction (Simplified for required format)
-        // ==================================================================
-        
+        // ------------------------------------------------------------
+        // 6) Final JSON RESPONSE (Frontend format)
+        // ------------------------------------------------------------
         const response = {
-            // Placeholder/Sample Fields (Requirement 4)
-            requestId: "CATALOG-" + new Date().getTime(),
-            scores: { teamA: 0, teamB: 0 }, // Example score structure
-            news: "No recent news", 
-
-            // The 'Catalog' object (Root properties of the main market)
-            Catalog: {
-                marketId: mainCatalogEntry.marketId,
-                marketName: mainCatalogEntry.marketName,
-                marketStartTime: mainCatalogEntry.marketStartTime,
-                status: mainCatalogEntry.status,
-                eventTypeId: eventTypeId,
-                eventType: sportName,
-                eventId: initialMarket.event?.id,
-                eventName: initialMarket.event?.name,
-                competitionId: initialMarket.competition?.id,
-                competitionName: initialMarket.competition?.name,
-                runners: mainRunners, // Root runners array
-                
-                // Keep flags for frontend convenience if needed, though filtering on subMarkets is better
-                isBmMarket: allMappedMarkets.some(m => m.marketType === "BOOKMAKER" || m.marketName?.toLowerCase().includes("bookmaker")),
-                hasFancyOdds: allMappedMarkets.some(m => m.bettingType === "LINE"),
-            },
-            
-            // 🌟 The core requirement: All markets merged into a single array
-            subMarkets: allMappedMarkets, 
-
-            updatedAt: new Date().toISOString(),
-            state: 0
+            requestId: String(Date.now()),
+            Catalog: catalogMarket || null,
+            subMarkets: subMarkets,
+            scores: {},
+            news: ""
         };
 
         return res.json(response);
 
     } catch (err) {
-        console.error("Catalog2 Error:", err.message);
+        console.error("Catalog2 Error:", err);
         return res.status(500).json({
             error: "Failed to fetch catalog2 market",
-            details: err.response?.statusText || err.message
+            details: err.message
         });
     }
 });
