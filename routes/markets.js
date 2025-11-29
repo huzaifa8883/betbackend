@@ -2073,17 +2073,18 @@ router.get('/catalog2', async (req, res) => {
       };
     });
         
-    const subMarkets = [ // 👈 Defining subMarkets with the suggested spread syntax
-      ...marketGroups.Catalog,
-      ...marketGroups.BookmakerMarkets,
-      ...marketGroups.TossMarkets,
-      ...marketGroups.FancyMarkets,
-      ...marketGroups.Fancy2Markets,
-      ...marketGroups.FigureMarkets,
-      ...marketGroups.OddFigureMarkets,
-      ...marketGroups.OtherMarkets,
-      ...marketGroups.OtherRaceMarkets
-    ];
+   const subMarkets = [
+  { name: "Catalog", markets: marketGroups.Catalog },
+  { name: "BookmakerMarkets", markets: marketGroups.BookmakerMarkets },
+  { name: "TossMarkets", markets: marketGroups.TossMarkets },
+  { name: "FancyMarkets", markets: marketGroups.FancyMarkets },
+  { name: "Fancy2Markets", markets: marketGroups.Fancy2Markets },
+  { name: "FigureMarkets", markets: marketGroups.FigureMarkets },
+  { name: "OddFigureMarkets", markets: marketGroups.OddFigureMarkets },
+  { name: "OtherMarkets", markets: marketGroups.OtherMarkets },
+  { name: "OtherRaceMarkets", markets: marketGroups.OtherRaceMarkets }
+];
+
 
     const response = {
       // Root properties (Backwards compatibility for Main Market)
