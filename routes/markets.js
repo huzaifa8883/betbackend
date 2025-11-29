@@ -2071,7 +2071,7 @@ router.get('/catalog2', async (req, res) => {
             hasFancyOdds: marketGroups.FancyMarkets.length > 0,
 
             // 🟢 The Dynamic Arrays (Backwards Compatibility)
-            Catalog: marketGroups.Catalog,
+            Catalog: marketGroups.Catalog[0] || {},
             BookmakerMarkets: marketGroups.BookmakerMarkets,
             TossMarkets: marketGroups.TossMarkets,
             FancyMarkets: marketGroups.FancyMarkets,
