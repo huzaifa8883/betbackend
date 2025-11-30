@@ -1897,6 +1897,7 @@ router.get('/catalog2', async (req, res) => {
                 status: bookItem.status,
                 totalMatched: bookItem.totalMatched,
                 marketStartTime: catalogItem.marketStartTime,
+                marketStartTimeUtc: catalogItem.marketStartTime,
                 runners: catalogItem.runners.map(runner => {
                     const runnerBook = bookItem.runners.find(r => r.selectionId === runner.selectionId);
 
