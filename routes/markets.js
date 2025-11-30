@@ -1991,7 +1991,6 @@ router.get('/catalog2', async (req, res) => {
         }
 
         // 7️⃣ Final Response
-      console.log(rootMarket)
 
         const response = {
             marketId: mainCatalogEntry.marketId,
