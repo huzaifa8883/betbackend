@@ -1575,95 +1575,121 @@ router.get('/live/tennis', async (req, res) => {
 // Global cache for horse racing data
 let horseCache = [];
 let lastUpdate = 0;
-const POLL_INTERVAL = 30000; // 30 seconds
+const POLL_INTERVAL = 30000; // 30 sec
 
-// Convert UTC → Pakistan Time (fixed)
+// Country groups
+const GROUP_WIN_ONLY = ["AU", "RSA", "US", "FR"];
+const GROUP_WIN_AND_PLACE = ["GB", "IE"];
+
+// Convert UTC → Pakistan Time
 function toPakistanTime(utcDateString) {
   const utcDate = new Date(utcDateString);
-  // Pakistan Standard Time = UTC +5
-  const pktTime = new Date(utcDate.getTime() + 5 * 60 * 60 * 1000);
-  return pktTime;
+  return new Date(utcDate.getTime() + 5 * 60 * 60 * 1000);
 }
 
-// Fetch events
-async function fetchEvents(eventTypeIds, countries) {
+// --------------------- FETCH EVENTS ---------------------
+async function fetchHorseEvents() {
   const sessionToken = await getSessionToken();
-  const response = await axios.post(
-    "https://api.betfair.com/exchange/betting/json-rpc/v1",
-    [
-      {
-        jsonrpc: "2.0",
-        method: "SportsAPING/v1.0/listEvents",
-        params: {
-          filter: {
-            eventTypeIds,
-            marketCountries: countries,
-            marketStartTime: {
-              from: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(),
-              to: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+
+  const groups = [
+    { countries: GROUP_WIN_ONLY, marketTypeCodes: ["WIN"] },
+    { countries: GROUP_WIN_AND_PLACE, marketTypeCodes: ["WIN", "PLACE"] },
+  ];
+
+  let finalGroups = [];
+
+  for (const g of groups) {
+    const response = await axios.post(
+      "https://api.betfair.com/exchange/betting/json-rpc/v1",
+      [
+        {
+          jsonrpc: "2.0",
+          method: "SportsAPING/v1.0/listEvents",
+          params: {
+            filter: {
+              eventTypeIds: ["7"],
+              marketCountries: g.countries,
+              marketStartTime: {
+                from: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(),
+                to: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+              },
             },
           },
+          id: 1,
         },
-        id: 1,
-      },
-    ],
-    {
-      headers: {
-        "X-Application": APP_KEY,
-        "X-Authentication": sessionToken,
-        "Content-Type": "application/json",
-      },
-    }
-  );
+      ],
+      {
+        headers: {
+          "X-Application": APP_KEY,
+          "X-Authentication": sessionToken,
+          "Content-Type": "application/json",
+        },
+      }
+    );
 
-  return response.data[0]?.result || [];
+    finalGroups.push({
+      marketTypeCodes: g.marketTypeCodes,
+      events: response.data[0]?.result || [],
+    });
+  }
+
+  return finalGroups;
 }
 
-// Fetch market catalogue
-async function fetchMarketCatalogue(eventIds) {
+// --------------------- FETCH MARKET CATALOGUE ---------------------
+async function fetchHorseMarketCatalogue(groupedEvents) {
   const sessionToken = await getSessionToken();
-  const response = await axios.post(
-    "https://api.betfair.com/exchange/betting/json-rpc/v1",
-    [
-      {
-        jsonrpc: "2.0",
-        method: "SportsAPING/v1.0/listMarketCatalogue",
-        params: {
-          filter: {
-            eventIds,
-            marketTypeCodes: ["WIN", "PLACE", "EACH_WAY"],
+  let allCatalogues = [];
+
+  for (const group of groupedEvents) {
+    const eventIds = group.events.map((e) => e.event.id);
+    if (!eventIds.length) continue;
+
+    const response = await axios.post(
+      "https://api.betfair.com/exchange/betting/json-rpc/v1",
+      [
+        {
+          jsonrpc: "2.0",
+          method: "SportsAPING/v1.0/listMarketCatalogue",
+          params: {
+            filter: {
+              eventIds,
+              marketTypeCodes: group.marketTypeCodes,
+            },
+            maxResults: "500",
+            marketProjection: ["EVENT", "RUNNER_METADATA", "MARKET_START_TIME"],
           },
-          maxResults: "500",
-          marketProjection: ["EVENT", "RUNNER_METADATA", "MARKET_START_TIME"],
+          id: 2,
         },
-        id: 2,
-      },
-    ],
-    {
-      headers: {
-        "X-Application": APP_KEY,
-        "X-Authentication": sessionToken,
-        "Content-Type": "application/json",
-      },
-    }
-  );
+      ],
+      {
+        headers: {
+          "X-Application": APP_KEY,
+          "X-Authentication": sessionToken,
+          "Content-Type": "application/json",
+        },
+      }
+    );
 
-  // Remove duplicate market IDs
-  let markets = response.data[0]?.result || [];
-  const seenMarketIds = new Set();
+    const catalogues = response.data[0]?.result || [];
+    allCatalogues.push(...catalogues);
+  }
 
-  markets = markets.filter((m) => {
-    if (seenMarketIds.has(m.marketId)) return false;
-    seenMarketIds.add(m.marketId);
+  // Remove duplicates
+  const seen = new Set();
+  allCatalogues = allCatalogues.filter((m) => {
+    if (seen.has(m.marketId)) return false;
+    seen.add(m.marketId);
     return true;
   });
 
-  return markets;
+  return allCatalogues;
 }
 
-// Fetch market books
+// --------------------- FETCH MARKET BOOKS ---------------------
 async function fetchMarketBooks(marketIds) {
   const sessionToken = await getSessionToken();
+
   const response = await axios.post(
     "https://api.betfair.com/exchange/betting/json-rpc/v1",
     [
@@ -1689,93 +1715,78 @@ async function fetchMarketBooks(marketIds) {
   return response.data[0]?.result || [];
 }
 
-// Polling function
+// --------------------- MAIN POLLING FUNCTION ---------------------
 async function updateHorseCache() {
   try {
-    const horseEvents = await fetchEvents(["7"], ["AU", "US", "FR"]);
+    const groupedEvents = await fetchHorseEvents();
+    if (!groupedEvents.length) return;
 
-    if (!horseEvents.length) {
-      horseCache = [];
-      lastUpdate = Date.now();
-      return;
-    }
-
-    const eventIds = horseEvents.map((e) => e.event.id);
-    const marketCatalogue = await fetchMarketCatalogue(eventIds);
-
-    if (!marketCatalogue.length) {
-      horseCache = [];
-      lastUpdate = Date.now();
-      return;
-    }
+    const marketCatalogue = await fetchHorseMarketCatalogue(groupedEvents);
+    if (!marketCatalogue.length) return;
 
     const marketIds = marketCatalogue.map((m) => m.marketId);
     const marketBooks = await fetchMarketBooks(marketIds);
 
     let finalData = marketCatalogue.map((market) => {
-      const matchingBook = marketBooks.find(
-        (b) => b.marketId === market.marketId
-      );
-      const event = horseEvents.find((e) => e.event.id === market.event.id);
+      const book = marketBooks.find((b) => b.marketId === market.marketId);
 
-      // Use marketStartTime if exists, otherwise fallback to event.openDate
-      const startUTC = market.marketStartTime || event.event.openDate;
-      const pktTime = startUTC && toPakistanTime(startUTC);
+      const startUTC = market.marketStartTime || market.event.openDate;
+      const pktTime = toPakistanTime(startUTC);
 
       return {
         marketId: market.marketId,
-        match: event?.event.name || "Unknown Event",
-        startTime: pktTime ? pktTime.toISOString() : "N/A",
-        marketStatus: matchingBook?.status || "UNKNOWN",
-        totalMatched: matchingBook?.totalMatched || 0,
+        country: market.event?.countryCode || "",
+        match: market.event.name,
+        marketType: market.description?.marketType || "",
+        startTime: pktTime.toISOString(),
+        marketStatus: book?.status || "UNKNOWN",
+        totalMatched: book?.totalMatched || 0,
 
         selections: market.runners.map((runner) => {
-          const runnerBook = matchingBook?.runners.find(
-            (b) => b.selectionId === runner.selectionId
+          const rb = book?.runners?.find(
+            (r) => r.selectionId === runner.selectionId
           );
 
           return {
             name: runner.runnerName,
-            back: runnerBook?.ex?.availableToBack?.slice(0, 3) || [],
-            lay: runnerBook?.ex?.availableToLay?.slice(0, 3) || [],
+            back: rb?.ex?.availableToBack?.slice(0, 3) || [],
+            lay: rb?.ex?.availableToLay?.slice(0, 3) || [],
           };
         }),
       };
     });
 
-    // Pakistan time filtering (next 24 hours)
-    const nowPKT = new Date(new Date().getTime() + 5 * 60 * 60 * 1000); // UTC+5
+    // Filter next 24 hours Pakistan time
+    const nowPKT = new Date(Date.now() + 5 * 60 * 60 * 1000);
     const next24 = new Date(nowPKT.getTime() + 24 * 60 * 60 * 1000);
 
-    finalData = finalData.filter((item) => {
-      const t = new Date(item.startTime);
-      return t >= nowPKT && t <= next24;
+    finalData = finalData.filter((m) => {
+      const time = new Date(m.startTime);
+      return time >= nowPKT && time <= next24;
     });
 
-    // Sort by Pakistan time
+    // Sort by time
     finalData.sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
 
     horseCache = finalData;
     lastUpdate = Date.now();
+
   } catch (err) {
-    console.error(
-      "❌ Horse Racing API Poll Error:",
-      err.response?.data || err.message
-    );
+    console.error("Horse API Error:", err.response?.data || err.message);
   }
 }
 
-// Start polling
+// Start Polling
 setInterval(updateHorseCache, POLL_INTERVAL);
 updateHorseCache();
 
-// Route
-router.route("/live/horse").get((req, res) => {
+// --------------------- ROUTE ---------------------
+router.get("/live/horse", (req, res) => {
   res.status(200).json({
     status: "success",
     count: horseCache.length,
-    data: horseCache,
     lastUpdate: new Date(lastUpdate).toISOString(),
+    data: horseCache,
   });
 });
 
