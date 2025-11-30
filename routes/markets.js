@@ -1851,7 +1851,7 @@ router.get('/catalog2', async (req, res) => {
                 method: "SportsAPING/v1.0/listMarketCatalogue",
                 params: {
                     filter: { eventIds: [eventId] },
-                    marketProjection: ["MARKET_START_TIME", "RUNNER_DESCRIPTION", "MARKET_DESCRIPTION", "EVENT_TYPE"],
+                    marketProjection: ["MARKET_START_TIME", "RUNNER_DESCRIPTION", "MARKET_DESCRIPTION", "EVENT_TYPE",  "RUNNER_METADATA", ],
                     maxResults: 80
                 },
                 id: 2
@@ -1922,17 +1922,24 @@ router.get('/catalog2', async (req, res) => {
 
                     const back = runnerBook?.ex?.availableToBack || [];
                     const lay = runnerBook?.ex?.availableToLay || [];
+  let silkColor = null, clothNumber = null, trapColor = null;
+    let coloursDescription = null, coloursImage = null;
 
-                    let silkColor = null, clothNumber = null, trapColor = null;
+    if (evTypeId == 7) { // Horse Racing
+        silkColor = md.COALESCED_PATH || null;   // fallback
+        clothNumber = md.CLOTH_NUMBER || null;
 
-                    if (evTypeId == 7) {
-                        silkColor = md.COALESCED_PATH || null;
-                        clothNumber = md.CLOTH_NUMBER || null;
-                    }
-                    if (evTypeId == 4339) {
-                        clothNumber = md.TRAP || null;
-                        trapColor = md.TRAP_COLOR || null;
-                    }
+        // New fields
+        coloursDescription = md.COLOURS_DESCRIPTION || null;
+        if (md.COLOURS_FILENAME) {
+            coloursImage = `https://content.betfair.com/feeds_images/Horses/SilkColours/${md.COLOURS_FILENAME}`;
+        }
+    }
+
+    if (evTypeId == 4339) { // Greyhound
+        clothNumber = md.TRAP || null;
+        trapColor = md.TRAP_COLOR || null;
+    }
 
                     return {
                         marketId: catalogItem.marketId,
@@ -1948,6 +1955,8 @@ router.get('/catalog2', async (req, res) => {
                         jockeyName: md.JOCKEY_NAME || null,
                         trainerName: md.TRAINER_NAME || null,
                         metadataDict: md,
+                         coloursDescription, // ✅ new textual description
+                        coloursImage,       // ✅ image URL
 
                         price1: back[0]?.price || 0,
                         size1: back[0]?.size || 0,
