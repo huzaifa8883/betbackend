@@ -1971,7 +1971,7 @@ if (evTypeId == 4339) { // Greyhound
     trapColor = trapColors[trap] || "grey"; // fallback color
 
     // Determine country folder for lhre.net
-    let countryCode = "GB"; // default
+    let countryCode = "uk"; // default
     const eventName = catalog.event?.name || "";
     const venue = catalog.event?.venue || "";
 
