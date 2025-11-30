@@ -1988,12 +1988,13 @@ router.get('/catalog2', async (req, res) => {
         }
 
         // 7️⃣ Final Response
+      const rootMarket = allMarkets.find(m => m.marketType === "MATCH_ODDS") || initialMarket;
+
         const response = {
             marketId: mainCatalogEntry.marketId,
             marketName: mainCatalogEntry.marketName,
-            marketStartTime: mainCatalogEntry.marketStartTime,
-            marketStartTimeUtc: mainCatalogEntry.marketStartTimeUtc, // don't fallback to new Date()
-            
+             marketStartTime: rootMarket.marketStartTime,
+             marketStartTimeUtc: rootMarket.marketStartTime,  // ✅ yahan root market ka time
 
             status: mainCatalogEntry.status,
             runners: mainCatalogEntry.runners,
