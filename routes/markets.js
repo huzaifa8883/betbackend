@@ -1996,8 +1996,8 @@ router.get('/catalog2', async (req, res) => {
         const response = {
             marketId: mainCatalogEntry.marketId,
             marketName: mainCatalogEntry.marketName,
-             marketStartTime: mainCatalogEntry.marketStartTime,
-             marketStartTimeUtc: mainCatalogEntry.marketStartTime,  // ✅ yahan root market ka time
+             marketStartTime: rootMarket.marketStartTime,
+             marketStartTimeUtc: rootMarket.marketStartTime,  // ✅ yahan root market ka time
 
             status: mainCatalogEntry.status,
             runners: mainCatalogEntry.runners,
