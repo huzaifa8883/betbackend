@@ -1917,6 +1917,8 @@ router.get('/catalog2', async (req, res) => {
                 runners: catalogItem.runners.map(runner => {
                     const runnerBook = bookItem.runners.find(r => r.selectionId === runner.selectionId);
                     const md = runner.metadata || {};
+                    console.log("Runner object:", runner);
+                   console.log("Runner metadata:", md);
 
                     const back = runnerBook?.ex?.availableToBack || [];
                     const lay = runnerBook?.ex?.availableToLay || [];
