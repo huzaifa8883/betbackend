@@ -1952,7 +1952,7 @@ router.get('/catalog2', async (req, res) => {
             if (sportName === "Cricket") {
                 if (mType === "MATCH_ODDS") marketGroups.Catalog.push(mappedMarket);
                 else if (mName.includes("bookmaker") || mType === "BOOKMAKER") marketGroups.BookmakerMarkets.push(mappedMarket);
-                else if (mName.includes("toss") || mType === "TOSS") marketGroups.TossMarkets.push(mappedMarket);
+                else if (mType === "TOSS" && !mName.includes("to win the toss")) marketGroups.TossMarkets.push(mappedMarket);
                 else if (mType === "ODD_FIGURE") marketGroups.OddFigureMarkets.push(mappedMarket);
                 else if (mType === "FIGURE") marketGroups.FigureMarkets.push(mappedMarket);
                 else if (mType === "LINE" && (mName.includes("innings") || mName.includes("over") || mName.includes("runs"))) marketGroups.FancyMarkets.push(mappedMarket);
