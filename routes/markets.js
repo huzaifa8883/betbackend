@@ -1956,8 +1956,8 @@ if (evTypeId == 7) { // Horse Racing
 
 
 
- if (evTypeId == 4339) { // Greyhound
-    const trap = md.TRAP || runner.runnerName?.match(/\d+/)?.[0]; // agar TRAP missing ho to name se try
+if (evTypeId == 4339) { // Greyhound
+    const trap = md.TRAP || runner.runnerName?.match(/\d+/)?.[0]; // TRAP missing ho to name se try
     const trapColors = {
         1: "red",
         2: "blue",
@@ -1968,17 +1968,27 @@ if (evTypeId == 7) { // Horse Racing
     };
 
     clothNumber = trap || null;
-    trapColor = trapColors[trap] || "grey"; // fallback grey
+    trapColor = trapColors[trap] || "grey"; // fallback color
 
-    // Construct image URL using lhre.net
-    silkColor = clothNumber ? `https://bp-silks.lhre.net/saddle/eu/${clothNumber}.svg` : `https://bp-silks.lhre.net/saddle/eu/default.svg`;
+    // Determine country folder for lhre.net
+    let countryCode = "GB"; // default
+    const eventName = catalog.event?.name || "";
+    const venue = catalog.event?.venue || "";
+
+    if (eventName.includes("US") || venue.includes("US")) countryCode = "us";
+    else if (eventName.includes("AU") || venue.includes("AU")) countryCode = "au";
+    else if (eventName.includes("GB") || venue.includes("UK")) countryCode = "uk";
+
+    // Construct image URL using lhre.net with country
+    silkColor = clothNumber ? `https://bp-silks.lhre.net/saddle/${countryCode}/${clothNumber}.svg` 
+                             : `https://bp-silks.lhre.net/saddle/${countryCode}/default.svg`;
+
     coloursDescription = trapColor;
     coloursImage = silkColor;
 
     jockeyName = null;
     trainerName = md.TRAINER_NAME || null;
 }
-
 
 
                     return {
