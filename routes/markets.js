@@ -1896,8 +1896,8 @@ router.get('/catalog2', async (req, res) => {
                 bettingType: catalogItem.description?.bettingType || null,
                 status: bookItem.status,
                 totalMatched: bookItem.totalMatched,
-                marketStartTime: catalogItem.marketStartTime,
-                marketStartTimeUtc: catalogItem.marketStartTime,
+                  marketStartTime: catalogItem.marketStartTime,
+                 marketStartTimeUtc: catalogItem.marketStartTime, // ensure correct UTC
                 runners: catalogItem.runners.map(runner => {
                     const runnerBook = bookItem.runners.find(r => r.selectionId === runner.selectionId);
 
@@ -1992,7 +1992,7 @@ router.get('/catalog2', async (req, res) => {
             marketId: mainCatalogEntry.marketId,
             marketName: mainCatalogEntry.marketName,
             marketStartTime: mainCatalogEntry.marketStartTime,
-            marketStartTimeUtc: mainCatalogEntry.marketStartTimeUtc || mainCatalogEntry.marketStartTime || new Date().toISOString(),
+            marketStartTimeUtc: mainCatalogEntry.marketStartTimeUtc, // don't fallback to new Date()
             
 
             status: mainCatalogEntry.status,
