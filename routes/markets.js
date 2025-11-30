@@ -1992,7 +1992,8 @@ router.get('/catalog2', async (req, res) => {
             marketId: mainCatalogEntry.marketId,
             marketName: mainCatalogEntry.marketName,
             marketStartTime: mainCatalogEntry.marketStartTime,
-           marketStartTimeUtc: mainCatalogEntry.marketStartTimeUtc, // ⬅️ add this
+            marketStartTimeUtc: mainCatalogEntry.marketStartTimeUtc || mainCatalogEntry.marketStartTime || new Date().toISOString()
+            
 
             status: mainCatalogEntry.status,
             runners: mainCatalogEntry.runners,
