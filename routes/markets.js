@@ -1814,7 +1814,7 @@ router.get('/catalog2', async (req, res) => {
                 method: "SportsAPING/v1.0/listMarketCatalogue",
                 params: {
                     filter: { marketIds: [marketId] },
-                    marketProjection: ["EVENT", "EVENT_TYPE", "MARKET_DESCRIPTION", "RUNNER_DESCRIPTION", "COMPETITION"],
+                    marketProjection: ["EVENT", "EVENT_TYPE", "MARKET_DESCRIPTION", "RUNNER_DESCRIPTION", "COMPETITION", "MARKET_START_TIME",],
                     maxResults: 1
                 },
                 id: 1
