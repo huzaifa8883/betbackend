@@ -1896,8 +1896,8 @@ router.get('/catalog2', async (req, res) => {
                 bettingType: catalogItem.description?.bettingType || null,
                 status: bookItem.status,
                 totalMatched: bookItem.totalMatched,
-                  marketStartTime: catalogItem.marketStartTime,
-                 marketStartTimeUtc: catalogItem.marketStartTime, // ensure correct UTC
+                 //  marketStartTime: catalogItem.marketStartTime,
+                 // marketStartTimeUtc: catalogItem.marketStartTime, // ensure correct UTC
                 runners: catalogItem.runners.map(runner => {
                     const runnerBook = bookItem.runners.find(r => r.selectionId === runner.selectionId);
 
@@ -1989,6 +1989,7 @@ router.get('/catalog2', async (req, res) => {
 
         // 7️⃣ Final Response
       const rootMarket = allMarkets.find(m => m.marketType === "MATCH_ODDS") || initialMarket;
+      console.log(rootMarket)
 
         const response = {
             marketId: mainCatalogEntry.marketId,
@@ -2002,7 +2003,6 @@ router.get('/catalog2', async (req, res) => {
             eventType: sportName,
             eventId: initialMarket.event?.id,
             eventName: initialMarket.event?.name,
-            marketStartTimeUtc: initialMarket.marketStartTime, // don't fallback to new Date()
             competitionId: initialMarket.competition?.id,
             competitionName: initialMarket.competition?.name,
             sport: { name: sportName, image: sportIcon, active: true },
