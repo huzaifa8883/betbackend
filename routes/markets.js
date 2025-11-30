@@ -2406,7 +2406,7 @@ async function fetchGreyhoundMarketBooks(marketIds) {
 async function updateGreyhoundCache() {
   try {
     // Expanded countries list for more coverage
-    const events = await fetchGreyhoundEvents(["4339"], ["AU", "NZ", "GB", "IE"]);
+    const events = await fetchGreyhoundEvents(["4339"], ["AU",  "GB"]);
 
     if (!events.length) {
       greyhoundCache = [];
