@@ -2001,6 +2001,7 @@ router.get('/catalog2', async (req, res) => {
             eventType: sportName,
             eventId: initialMarket.event?.id,
             eventName: initialMarket.event?.name,
+            marketStartTimeUtc: initialMarket.marketStartTime, // don't fallback to new Date()
             competitionId: initialMarket.competition?.id,
             competitionName: initialMarket.competition?.name,
             sport: { name: sportName, image: sportIcon, active: true },
