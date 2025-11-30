@@ -1956,10 +1956,36 @@ if (evTypeId == 7) { // Horse Racing
 
 
 
-    if (evTypeId == 4339) { // Greyhound
-        clothNumber = md.TRAP || null;
-        trapColor = md.TRAP_COLOR || null;
+  if (evTypeId == 4339) { // Greyhound
+    clothNumber = md.TRAP || null; // trap number
+    trapColor = md.TRAP_COLOR || null; // textual color info
+
+    // Determine country code from event name or venue (default 'us')
+    let countryCode = 'us';
+    if (catalog.event?.venue) {
+        const venue = catalog.event.venue.toLowerCase();
+        if (venue.includes("fr")) countryCode = 'fr';
+        else if (venue.includes("gb")) countryCode = 'gb';
+        else if (venue.includes("au")) countryCode = 'au';
+    } else if (catalog.event?.name) {
+        const name = catalog.event.name.toLowerCase();
+        if (name.includes("fr")) countryCode = 'fr';
+        else if (name.includes("gb")) countryCode = 'gb';
+        else if (name.includes("au")) countryCode = 'au';
     }
+
+    // Construct greyhound silk image URL
+    silkColor = clothNumber 
+        ? `https://bp-silks.lhre.net/saddle/${countryCode}/${clothNumber}.svg` 
+        : null;
+
+    coloursDescription = trapColor || null;
+    coloursImage = silkColor;
+
+    jockeyName = null; // greyhound me jockey nahi hota
+    trainerName = md.TRAINER_NAME || null; // trainer name
+}
+
 
                     return {
                         marketId: catalogItem.marketId,
