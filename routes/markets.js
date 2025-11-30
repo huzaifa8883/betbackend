@@ -1925,16 +1925,18 @@ router.get('/catalog2', async (req, res) => {
   let silkColor = null, clothNumber = null, trapColor = null;
     let coloursDescription = null, coloursImage = null;
 
-    if (evTypeId == 7) { // Horse Racing
-        silkColor = md.COALESCED_PATH || null;   // fallback
-        clothNumber = md.CLOTH_NUMBER || null;
+if (evTypeId == 7) { // Horse Racing
+    clothNumber = md.CLOTH_NUMBER || null;
 
-        // New fields
-        coloursDescription = md.COLOURS_DESCRIPTION || null;
-        if (md.COLOURS_FILENAME) {
-            coloursImage = `https://content.betfair.com/feeds_images/Horses/SilkColours/${md.COLOURS_FILENAME}`;
-        }
-    }
+    // Silk image for frontend
+    silkColor = md.COLOURS_FILENAME 
+        ? `https://content.betfair.com/feeds_images/Horses/SilkColours/${md.COLOURS_FILENAME}` 
+        : null;
+
+    coloursDescription = md.COLOURS_DESCRIPTION || null;
+    coloursImage = silkColor; // optional, same as silkColor
+}
+
 
     if (evTypeId == 4339) { // Greyhound
         clothNumber = md.TRAP || null;
