@@ -1905,6 +1905,8 @@ router.get('/catalog2', async (req, res) => {
                     const lay  = runnerBook?.ex?.availableToLay  || [];
 
                     return {
+                        marketId: catalogItem.marketId,  // ⬅️ ye missing tha
+
                         selectionId: runner.selectionId,
                         runnerName: runner.runnerName,
                         handicap: runner.handicap,
@@ -2004,7 +2006,7 @@ router.get('/catalog2', async (req, res) => {
             isBmMarket: marketGroups.BookmakerMarkets.length > 0,
             hasBookmakerMarkets: marketGroups.BookmakerMarkets.length > 0,
             hasFancyOdds: marketGroups.FancyMarkets.length > 0,
-            Catalog: marketGroups.Catalog[0] || {},
+            // Catalog: marketGroups.Catalog[0] || {},
             BookmakerMarkets: marketGroups.BookmakerMarkets,
             TossMarkets: marketGroups.TossMarkets,
             FancyMarkets: marketGroups.FancyMarkets,
