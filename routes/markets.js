@@ -1823,6 +1823,8 @@ router.get('/catalog2', async (req, res) => {
         );
 
         const initialMarket = initialResponse.data[0]?.result?.[0];
+        const catalog = initialResponse.data[0]?.result?.[0];
+
         if (!initialMarket) return res.status(404).json({ error: "Market not found" });
 
         const eventId = initialMarket.event?.id;
@@ -1885,7 +1887,7 @@ router.get('/catalog2', async (req, res) => {
         const sportIcon = sportIconMap[sportName] || "default.svg";
 
         // 5️⃣ Helper: Map market data to frontend structure
-        const mapMarketData = (catalogItem, bookItem, currentEventTypeId,rootStartTime) => {
+        const mapMarketData = (catalogItem, bookItem, currentEventTypeId) => {
             if (!bookItem) return null;
 
             return {
@@ -1894,8 +1896,7 @@ router.get('/catalog2', async (req, res) => {
                 marketType: catalogItem.description?.marketType,
                 eventTypeId: currentEventTypeId,
                 bettingType: catalogItem.description?.bettingType || null,
-                marketStartTime: rootStartTime,        // <== assign root market time
-                marketStartTimeUtc: rootStartTime,    // <== assign UTC time
+              
                 status: bookItem.status,
                 totalMatched: bookItem.totalMatched,
                  //  marketStartTime: catalogItem.marketStartTime,
@@ -1981,13 +1982,12 @@ router.get('/catalog2', async (req, res) => {
             ...marketGroups.OtherMarkets,
             ...marketGroups.OtherRaceMarkets
         ];
-      const rootMarket = allMarkets.find(m => m.marketType === "MATCH_ODDS") || initialMarket;
 
         let mainCatalogEntry = subMarkets.find(m => m.marketId === marketId);
         if (!mainCatalogEntry) {
             const initialBook = allBooks.find(b => b.marketId === marketId);
             if (!initialBook) return res.status(404).json({ error: "Market found, but no book data available." });
-            mainCatalogEntry = mapMarketData(initialMarket, initialBook, eventTypeId,rootMarket.marketStartTime);
+            mainCatalogEntry = mapMarketData(initialMarket, initialBook, eventTypeId);
         }
 
         // 7️⃣ Final Response
@@ -1996,8 +1996,8 @@ router.get('/catalog2', async (req, res) => {
         const response = {
             marketId: mainCatalogEntry.marketId,
             marketName: mainCatalogEntry.marketName,
-             marketStartTime: rootMarket.marketStartTime,
-             marketStartTimeUtc: rootMarket.marketStartTime,  // ✅ yahan root market ka time
+            marketStartTimeUtc: catalog.marketStartTime,
+
 
             status: mainCatalogEntry.status,
             runners: mainCatalogEntry.runners,
