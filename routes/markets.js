@@ -1593,20 +1593,7 @@ function toPakistanTime(utcDateString) {
 }
 
 // --------------------- FILTER FUTURE 24H ONLY ---------------------
-const nowPKT = new Date(Date.now() + 5 * 60 * 60 * 1000);
-const next24h = new Date(nowPKT.getTime() + 24 * 60 * 60 * 1000);
 
-finalData = finalData.filter((m) => {
-  const startPKT = new Date(m.startTime); // already PKT
-  return startPKT > nowPKT && startPKT <= next24h;
-});
-
-// --------------------- SORT ---------------------
-finalData.sort((a, b) => {
-  const startA = new Date(a.startTime);
-  const startB = new Date(b.startTime);
-  return startA - startB;
-});
 
 
 // --------------------- FETCH EVENTS ---------------------
@@ -1807,16 +1794,18 @@ async function updateHorseCache() {
     });
 
     // --------------------- FILTER FUTURE 24H ONLY ---------------------
-    const nowPKT = Date.now() + 5 * 60 * 60 * 1000; // PKT ms
-    const next24h = nowPKT + 24 * 60 * 60 * 1000;
+   const nowPKT = new Date(Date.now() + 5 * 60 * 60 * 1000);
+const next24h = new Date(nowPKT.getTime() + 24 * 60 * 60 * 1000);
 
-    finalData = finalData.filter((m) => {
-      const start = new Date(m.startTime).getTime();
-      return start > nowPKT && start <= next24h;
-    });
-
-    finalData.sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
-
+  finalData = finalData.filter((m) => {
+  const startPKT = new Date(m.startTime); // already PKT
+  return startPKT > nowPKT && startPKT <= next24h;
+});
+finalData.sort((a, b) => {
+  const startA = new Date(a.startTime);
+  const startB = new Date(b.startTime);
+  return startA - startB;
+});
     horseCache = finalData;
     lastUpdate = Date.now();
   } catch (err) {
