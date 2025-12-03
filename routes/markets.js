@@ -1613,7 +1613,7 @@ async function fetchHorseEvents() {
               eventTypeIds: ["7"],
               marketCountries: g.countries,
               marketStartTime: {
-                from: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(),
+                from: new Date().toISOString(), // ✅ Only future events
                 to: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
               },
             },
@@ -1637,6 +1637,7 @@ async function fetchHorseEvents() {
   }
   return finalGroups;
 }
+
 
 // --------------------- FETCH MARKET CATALOGUE ---------------------
 async function fetchHorseMarketCatalogue(groupedEvents) {
