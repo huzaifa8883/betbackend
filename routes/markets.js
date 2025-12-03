@@ -1576,8 +1576,8 @@ router.get('/live/tennis', async (req, res) => {
 let horseCache = [];
 let lastUpdate = 0;
 
-const POLL_INTERVAL = 10000; // 10 sec polling recommended
-const MAX_MARKET_CHUNK = 150; // batch for MarketBook calls
+const POLL_INTERVAL = 10000; // 10 sec polling
+const MAX_MARKET_CHUNK = 150;
 
 // Country groups
 const GROUP_WIN_ONLY = ["AU", "RSA", "US", "FR"];
@@ -1588,7 +1588,8 @@ let lastKnownHorseBooks = new Map();
 
 // Convert UTC → Pakistan Time (Date object)
 function toPakistanTime(utcDateString) {
-  return new Date(new Date(utcDateString).getTime() + 5 * 60 * 60 * 1000);
+  const d = new Date(utcDateString);
+  return new Date(d.getTime() + 5 * 60 * 60 * 1000);
 }
 
 // --------------------- FETCH EVENTS ---------------------
@@ -1727,7 +1728,6 @@ async function fetchMarketBooks(marketIds) {
 
     let books = response.data[0]?.result || [];
 
-    // fallback: cache last known book
     books.forEach((b) => {
       if (b.runners && b.runners.length > 0) lastKnownHorseBooks.set(b.marketId, b);
       else if (lastKnownHorseBooks.has(b.marketId))
@@ -1757,18 +1757,17 @@ async function updateHorseCache() {
         || lastKnownHorseBooks.get(market.marketId);
 
       const startUTC = market.marketStartTime || market.event.openDate;
-      const startPKT = toPakistanTime(startUTC); // Date object for all comparisons
+      const startPKT = toPakistanTime(startUTC);
 
       return {
         marketId: market.marketId,
         country: market.event?.countryCode || "",
         match: market.event.name,
         marketType: market.description?.marketType || "",
-        startTimeObj: startPKT,          // keep Date object
-        startTime: startPKT.toISOString(), // ISO string for API
+        startTimeObj: startPKT,
+        startTime: startPKT.toISOString(),
         marketStatus: book?.status || "UNKNOWN",
         totalMatched: book?.totalMatched || 0,
-
         selections: market.runners.map((runner) => {
           const rb = book?.runners?.find((r) => r.selectionId === runner.selectionId);
           const md = runner.metadata || {};
@@ -1789,17 +1788,16 @@ async function updateHorseCache() {
       };
     });
 
-    // --------------------- FILTER FUTURE 24H ONLY ---------------------
+    // --------------------- FILTER NEXT 24H ---------------------
     const nowPKT = new Date(Date.now() + 5 * 60 * 60 * 1000);
     const next24h = new Date(nowPKT.getTime() + 24 * 60 * 60 * 1000);
 
-    finalData = finalData.filter((m) => {
-      const t = m.startTimeObj.getTime(); // use Date object
-      return t > nowPKT.getTime() && t <= next24h.getTime();
-    });
-
-    // Sort by startTimeObj
-    finalData.sort((a, b) => a.startTimeObj - b.startTimeObj);
+    finalData = finalData
+      .filter((m) => {
+        const t = m.startTimeObj.getTime();
+        return t > nowPKT.getTime() && t <= next24h.getTime();
+      })
+      .sort((a, b) => a.startTimeObj.getTime() - b.startTimeObj.getTime());
 
     horseCache = finalData;
     lastUpdate = Date.now();
