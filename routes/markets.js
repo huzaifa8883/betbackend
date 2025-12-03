@@ -1584,9 +1584,13 @@ const GROUP_WIN_AND_PLACE = ["GB", "IE"];
 // Cache last valid MarketBooks
 let lastKnownHorseBooks = new Map();
 
-// Convert UTC → Pakistan Time (Date object)
+// --------------------- TIME HELPERS ---------------------
 function toPakistanTime(utcDateString) {
   return new Date(new Date(utcDateString).getTime() + 5 * 60 * 60 * 1000);
+}
+
+function formatPKT(date) {
+  return date.toLocaleString("en-GB", { timeZone: "Asia/Karachi" });
 }
 
 // --------------------- FETCH EVENTS ---------------------
@@ -1674,7 +1678,7 @@ async function fetchHorseMarketCatalogue(groupedEvents) {
     allCatalogues.push(...catalogues);
   }
 
-  // Remove duplicates by marketId
+  // Remove duplicates
   const seen = new Set();
   allCatalogues = allCatalogues.filter((m) => {
     if (seen.has(m.marketId)) return false;
@@ -1725,10 +1729,11 @@ async function fetchMarketBooks(marketIds) {
 
     let books = response.data[0]?.result || [];
 
-    // Fallback: cache last known book
-    books.forEach((b, idx) => {
+    // fallback: cache last known book
+    books.forEach((b) => {
       if (b.runners && b.runners.length > 0) lastKnownHorseBooks.set(b.marketId, b);
-      else if (lastKnownHorseBooks.has(b.marketId)) books[idx] = lastKnownHorseBooks.get(b.marketId);
+      else if (lastKnownHorseBooks.has(b.marketId))
+        books[books.indexOf(b)] = lastKnownHorseBooks.get(b.marketId);
     });
 
     allBooks.push(...books);
@@ -1761,8 +1766,8 @@ async function updateHorseCache() {
         country: market.event?.countryCode || "",
         match: market.event.name,
         marketType: market.description?.marketType || "",
-        startTimeObj: startPKT,
-        startTime: startPKT.toISOString(),
+        startTimeObj: startPKT,                    // PKT Date object
+        startTime: formatPKT(startPKT),           // PKT string for API
         marketStatus: book?.status || "UNKNOWN",
         totalMatched: book?.totalMatched || 0,
         selections: market.runners.map((runner) => {
@@ -1771,8 +1776,8 @@ async function updateHorseCache() {
           let silkUrl = md.COLOURS_IMAGE_URL
             ? md.COLOURS_IMAGE_URL
             : md.COLOURS_FILENAME
-              ? `https://bp-silks.lhre.net/proxy/${md.COLOURS_FILENAME}`
-              : null;
+            ? `https://bp-silks.lhre.net/proxy/${md.COLOURS_FILENAME}`
+            : null;
 
           return {
             selectionId: runner.selectionId,
@@ -1787,17 +1792,17 @@ async function updateHorseCache() {
       };
     });
 
-    // --------------------- FILTER NEXT 24H & DEDUPLICATE ---------------------
+    // --------------------- FILTER FUTURE 24H ONLY ---------------------
     const nowPKT = new Date(Date.now() + 5 * 60 * 60 * 1000);
     const next24h = new Date(nowPKT.getTime() + 24 * 60 * 60 * 1000);
 
-    finalData = finalData
-      // remove duplicate marketIds
-      .filter((m, idx, arr) => arr.findIndex(x => x.marketId === m.marketId) === idx)
-      // next 24h
-      .filter(m => m.startTimeObj.getTime() > nowPKT.getTime() && m.startTimeObj.getTime() <= next24h.getTime())
-      // sort by startTimeObj
-      .sort((a, b) => a.startTimeObj.getTime() - b.startTimeObj.getTime());
+    finalData = finalData.filter((m) => {
+      const t = m.startTimeObj.getTime();
+      return t > nowPKT.getTime() && t <= next24h.getTime();
+    });
+
+    // Sort by startTimeObj
+    finalData.sort((a, b) => a.startTimeObj - b.startTimeObj);
 
     horseCache = finalData;
     lastUpdate = Date.now();
@@ -1806,7 +1811,7 @@ async function updateHorseCache() {
   }
 }
 
-// Start polling
+// --------------------- START POLLING ---------------------
 updateHorseCache();
 setInterval(updateHorseCache, POLL_INTERVAL);
 
@@ -1819,7 +1824,6 @@ router.get("/live/horse", (req, res) => {
     data: horseCache,
   });
 });
-
 
 
 const sportMap = {
