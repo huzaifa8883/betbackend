@@ -1759,7 +1759,7 @@ async function updateHorseCache() {
         || lastKnownHorseBooks.get(market.marketId);
 
       const startUTC = market.marketStartTime || market.event.openDate;
-      const startPKT = toPakistanTime(startUTC);
+     const startPKT = toPakistanTime(startUTC);
 
       return {
         marketId: market.marketId,
@@ -1793,12 +1793,14 @@ async function updateHorseCache() {
     });
 
     // Filter next 24h
-    const nowUTC = new Date();
-    const next24hUTC = new Date(nowUTC.getTime() + 24 * 60 * 60 * 1000);
-    finalData = finalData.filter((m) => {
-      const tUTC = new Date(m.startTimeObj.getTime() - 5 * 60 * 60 * 1000); // convert PKT back to UTC
-      return tUTC > nowUTC && tUTC <= next24hUTC;
-    });
+   // Filter next 24h from current PKT time
+const nowPKT = new Date(Date.now() + 5 * 60 * 60 * 1000); 
+const next24hPKT = new Date(nowPKT.getTime() + 24 * 60 * 60 * 1000);
+
+finalData = finalData.filter((m) => {
+  const tPKT = m.startTimeObj; // already PKT
+  return tPKT > nowPKT && tPKT <= next24hPKT;
+});
 
     // Sort by startTimeObj
     finalData.sort((a, b) => a.startTimeObj - b.startTimeObj);
