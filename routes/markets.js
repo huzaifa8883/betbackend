@@ -1792,14 +1792,23 @@ async function updateHorseCache() {
       };
     });
 
-    // --------------------- FILTER FUTURE 24H ONLY ---------------------
-    const nowPKT = new Date(Date.now() + 5 * 60 * 60 * 1000);
-    const next24h = new Date(nowPKT.getTime() + 24 * 60 * 60 * 1000);
+   const nowUTC = new Date(); // current UTC time
+const next24hUTC = new Date(nowUTC.getTime() + 24 * 60 * 60 * 1000);
 
-    finalData = finalData.filter((m) => {
-      const t = m.startTimeObj.getTime();
-      return t > nowPKT.getTime() && t <= next24h.getTime();
-    });
+finalData = finalData.filter((m) => {
+  const tUTC = new Date(m.startTimeObj); // startTimeObj is still UTC
+  return tUTC > nowUTC && tUTC <= next24hUTC;
+});
+
+// Then, for display:
+finalData = finalData.map((m) => {
+  const startPKT = toPakistanTime(m.startTimeObj);
+  return {
+    ...m,
+    startTime: formatPKT(startPKT),
+    startTimeObj: startPKT,
+  };
+});
 
     // Sort by startTimeObj
     finalData.sort((a, b) => a.startTimeObj - b.startTimeObj);
