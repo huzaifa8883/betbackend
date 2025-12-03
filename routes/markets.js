@@ -1577,7 +1577,7 @@ const POLL_INTERVAL = 10000; // 10 sec polling
 const MAX_MARKET_CHUNK = 150; // batch for MarketBook calls
 
 // Country groups
-const GROUP_WIN_ONLY = ["AU", "RSA", "US", "FR"];
+const GROUP_WIN_ONLY = ["AU", "RSA", "US"];
 const GROUP_WIN_AND_PLACE = ["GB", "IE"];
 
 // Cache last known MarketBooks
