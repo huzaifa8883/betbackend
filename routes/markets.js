@@ -1922,30 +1922,19 @@ router.get('/catalog2', async (req, res) => {
 
                     const back = runnerBook?.ex?.availableToBack || [];
                     const lay = runnerBook?.ex?.availableToLay || [];
-  let silkColor = null, clothNumber = null, trapColor = null;
-    let coloursDescription = null, coloursImage = null;
 if (evTypeId == 7) { // Horse Racing
     clothNumber = md.CLOTH_NUMBER || null;
 
-    // Determine country code from event name or venue
-    let countryCode = 'us'; // default
-    if (catalog.event?.venue) {
-        const venue = catalog.event.venue.toLowerCase();
-        if (venue.includes("fr")) countryCode = 'fr';
-        else if (venue.includes("gb")) countryCode = 'gb';
-        else if (venue.includes("au")) countryCode = 'au';
-        // add more countries as needed
-    } else if (catalog.event?.name) {
-        const name = catalog.event.name.toLowerCase();
-        if (name.includes("fr")) countryCode = 'fr';
-        else if (name.includes("gb")) countryCode = 'gb';
-        else if (name.includes("au")) countryCode = 'au';
+    // Try Betfair-provided silk image first
+    if (md.COLOURS_IMAGE_URL) {
+        silkColor = md.COLOURS_IMAGE_URL;
+    } 
+    else if (md.COLOURS_FILENAME) {
+        silkColor = `https://bp-silks.lhre.net/proxy/${md.COLOURS_FILENAME}`;
     }
-
-    // Construct silk SVG URL dynamically based on country code
-    silkColor = clothNumber 
-        ? `https://bp-silks.lhre.net/saddle/${countryCode}/${clothNumber}.svg` 
-        : null;
+    else {
+        silkColor = null;
+    }
 
     coloursDescription = md.COLOURS_DESCRIPTION || null;
     coloursImage = silkColor;
