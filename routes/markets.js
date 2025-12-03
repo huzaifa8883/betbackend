@@ -1793,10 +1793,15 @@ async function updateHorseCache() {
     // Filter next 24 hours Pakistan time
     const nowPKT = new Date(Date.now() + 5 * 60 * 60 * 1000);
     const next24 = new Date(nowPKT.getTime() + 24 * 60 * 60 * 1000);
-    finalData = finalData.filter((m) => {
-      const time = new Date(m.startTime);
-      return time >= nowPKT && time <= next24;
-    });
+// Filter races that have not started yet in Pakistan Time
+finalData = finalData.filter((m) => {
+  const startPKT = new Date(m.startTime).getTime();
+  const now = Date.now() + 5 * 60 * 60 * 1000; // PKT
+  const next24h = now + 24 * 60 * 60 * 1000;
+
+  return startPKT > now && startPKT <= next24h;
+});
+
 
     // Sort by start time
     finalData.sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
