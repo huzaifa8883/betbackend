@@ -1576,14 +1576,14 @@ router.get('/live/tennis', async (req, res) => {
 let horseCache = [];
 let lastUpdate = 0;
 
-const POLL_INTERVAL = 10000; // 10 seconds polling recommended
+const POLL_INTERVAL = 10000; // 10 sec polling recommended
 const MAX_MARKET_CHUNK = 150; // batch for MarketBook calls
 
 // Country groups
 const GROUP_WIN_ONLY = ["AU", "RSA", "US", "FR"];
 const GROUP_WIN_AND_PLACE = ["GB", "IE"];
 
-// Cache last valid MarketBooks for fallback
+// Cache last valid MarketBooks
 let lastKnownHorseBooks = new Map();
 
 // Convert UTC → Pakistan Time
@@ -1613,7 +1613,7 @@ async function fetchHorseEvents() {
               eventTypeIds: ["7"],
               marketCountries: g.countries,
               marketStartTime: {
-                from: new Date().toISOString(), // ✅ Only future events
+                from: new Date().toISOString(), // only future
                 to: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
               },
             },
@@ -1637,7 +1637,6 @@ async function fetchHorseEvents() {
   }
   return finalGroups;
 }
-
 
 // --------------------- FETCH MARKET CATALOGUE ---------------------
 async function fetchHorseMarketCatalogue(groupedEvents) {
@@ -1790,20 +1789,15 @@ async function updateHorseCache() {
       };
     });
 
-    // Filter next 24 hours Pakistan time
-    const nowPKT = new Date(Date.now() + 5 * 60 * 60 * 1000);
-    const next24 = new Date(nowPKT.getTime() + 24 * 60 * 60 * 1000);
-// Filter races that have not started yet in Pakistan Time
-finalData = finalData.filter((m) => {
-  const startPKT = new Date(m.startTime).getTime();
-  const now = Date.now() + 5 * 60 * 60 * 1000; // PKT
-  const next24h = now + 24 * 60 * 60 * 1000;
+    // --------------------- FILTER FUTURE 24H ONLY ---------------------
+    const nowPKT = Date.now() + 5 * 60 * 60 * 1000; // PKT ms
+    const next24h = nowPKT + 24 * 60 * 60 * 1000;
 
-  return startPKT > now && startPKT <= next24h;
-});
+    finalData = finalData.filter((m) => {
+      const start = new Date(m.startTime).getTime();
+      return start > nowPKT && start <= next24h;
+    });
 
-
-    // Sort by start time
     finalData.sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
 
     horseCache = finalData;
@@ -1826,6 +1820,7 @@ router.get("/live/horse", (req, res) => {
     data: horseCache,
   });
 });
+
 
 const sportMap = {
   1: { name: "Soccer", image: "soccer.svg" },
