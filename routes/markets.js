@@ -1587,10 +1587,27 @@ const GROUP_WIN_AND_PLACE = ["GB", "IE"];
 let lastKnownHorseBooks = new Map();
 
 // Convert UTC → Pakistan Time
+// Convert UTC → Pakistan Time Date object
 function toPakistanTime(utcDateString) {
-  const utcDate = new Date(utcDateString);
-  return new Date(utcDate.getTime() + 5 * 60 * 60 * 1000);
+  return new Date(new Date(utcDateString).getTime() + 5 * 60 * 60 * 1000);
 }
+
+// --------------------- FILTER FUTURE 24H ONLY ---------------------
+const nowPKT = new Date(Date.now() + 5 * 60 * 60 * 1000);
+const next24h = new Date(nowPKT.getTime() + 24 * 60 * 60 * 1000);
+
+finalData = finalData.filter((m) => {
+  const startPKT = new Date(m.startTime); // already PKT
+  return startPKT > nowPKT && startPKT <= next24h;
+});
+
+// --------------------- SORT ---------------------
+finalData.sort((a, b) => {
+  const startA = new Date(a.startTime);
+  const startB = new Date(b.startTime);
+  return startA - startB;
+});
+
 
 // --------------------- FETCH EVENTS ---------------------
 async function fetchHorseEvents() {
