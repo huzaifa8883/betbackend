@@ -1575,11 +1575,16 @@ router.get('/live/tennis', async (req, res) => {
 // Global cache for horse racing data
 let horseCache = [];
 let lastUpdate = 0;
-const POLL_INTERVAL = 30000; // 30 sec
+
+const POLL_INTERVAL = 10000; // 10 seconds polling recommended
+const MAX_MARKET_CHUNK = 150; // batch for MarketBook calls
 
 // Country groups
 const GROUP_WIN_ONLY = ["AU", "RSA", "US", "FR"];
 const GROUP_WIN_AND_PLACE = ["GB", "IE"];
+
+// Cache last valid MarketBooks for fallback
+let lastKnownHorseBooks = new Map();
 
 // Convert UTC → Pakistan Time
 function toPakistanTime(utcDateString) {
@@ -1590,14 +1595,12 @@ function toPakistanTime(utcDateString) {
 // --------------------- FETCH EVENTS ---------------------
 async function fetchHorseEvents() {
   const sessionToken = await getSessionToken();
-
   const groups = [
     { countries: GROUP_WIN_ONLY, marketTypeCodes: ["WIN"] },
     { countries: GROUP_WIN_AND_PLACE, marketTypeCodes: ["WIN", "PLACE"] },
   ];
 
   let finalGroups = [];
-
   for (const g of groups) {
     const response = await axios.post(
       "https://api.betfair.com/exchange/betting/json-rpc/v1",
@@ -1632,7 +1635,6 @@ async function fetchHorseEvents() {
       events: response.data[0]?.result || [],
     });
   }
-
   return finalGroups;
 }
 
@@ -1686,33 +1688,57 @@ async function fetchHorseMarketCatalogue(groupedEvents) {
   return allCatalogues;
 }
 
-// --------------------- FETCH MARKET BOOKS ---------------------
+// --------------------- FETCH MARKET BOOKS (BATCHED) ---------------------
 async function fetchMarketBooks(marketIds) {
   const sessionToken = await getSessionToken();
+  const chunks = [];
 
-  const response = await axios.post(
-    "https://api.betfair.com/exchange/betting/json-rpc/v1",
-    [
-      {
-        jsonrpc: "2.0",
-        method: "SportsAPING/v1.0/listMarketBook",
-        params: {
-          marketIds,
-          priceProjection: { priceData: ["EX_BEST_OFFERS"] },
+  for (let i = 0; i < marketIds.length; i += MAX_MARKET_CHUNK) {
+    chunks.push(marketIds.slice(i, i + MAX_MARKET_CHUNK));
+  }
+
+  let allBooks = [];
+  for (const chunk of chunks) {
+    const response = await axios.post(
+      "https://api.betfair.com/exchange/betting/json-rpc/v1",
+      [
+        {
+          jsonrpc: "2.0",
+          method: "SportsAPING/v1.0/listMarketBook",
+          params: {
+            marketIds: chunk,
+            priceProjection: {
+              priceData: ["EX_BEST_OFFERS", "EX_TRADED", "EX_ALL_OFFERS"],
+              virtualise: true,
+            },
+            orderProjection: "ALL",
+            matchProjection: "ROLLED_UP_BY_PRICE",
+          },
+          id: 3,
         },
-        id: 3,
-      },
-    ],
-    {
-      headers: {
-        "X-Application": APP_KEY,
-        "X-Authentication": sessionToken,
-        "Content-Type": "application/json",
-      },
-    }
-  );
+      ],
+      {
+        headers: {
+          "X-Application": APP_KEY,
+          "X-Authentication": sessionToken,
+          "Content-Type": "application/json",
+        },
+      }
+    );
 
-  return response.data[0]?.result || [];
+    let books = response.data[0]?.result || [];
+
+    // fallback: cache last known book
+    books.forEach((b) => {
+      if (b.runners && b.runners.length > 0) lastKnownHorseBooks.set(b.marketId, b);
+      else if (lastKnownHorseBooks.has(b.marketId))
+        books[books.indexOf(b)] = lastKnownHorseBooks.get(b.marketId);
+    });
+
+    allBooks.push(...books);
+  }
+
+  return allBooks;
 }
 
 // --------------------- MAIN POLLING FUNCTION ---------------------
@@ -1728,7 +1754,8 @@ async function updateHorseCache() {
     const marketBooks = await fetchMarketBooks(marketIds);
 
     let finalData = marketCatalogue.map((market) => {
-      const book = marketBooks.find((b) => b.marketId === market.marketId);
+      const book = marketBooks.find((b) => b.marketId === market.marketId)
+        || lastKnownHorseBooks.get(market.marketId);
 
       const startUTC = market.marketStartTime || market.event.openDate;
       const pktTime = toPakistanTime(startUTC);
@@ -1743,12 +1770,18 @@ async function updateHorseCache() {
         totalMatched: book?.totalMatched || 0,
 
         selections: market.runners.map((runner) => {
-          const rb = book?.runners?.find(
-            (r) => r.selectionId === runner.selectionId
-          );
+          const rb = book?.runners?.find((r) => r.selectionId === runner.selectionId);
+          const md = runner.metadata || {};
+          let silkUrl = null;
+          if (md.COLOURS_IMAGE_URL) silkUrl = md.COLOURS_IMAGE_URL;
+          else if (md.COLOURS_FILENAME) silkUrl = `https://bp-silks.lhre.net/proxy/${md.COLOURS_FILENAME}`;
 
           return {
+            selectionId: runner.selectionId,
             name: runner.runnerName,
+            silk: silkUrl,
+            jockey: md.JOCKEY_NAME || null,
+            trainer: md.TRAINER_NAME || null,
             back: rb?.ex?.availableToBack?.slice(0, 3) || [],
             lay: rb?.ex?.availableToLay?.slice(0, 3) || [],
           };
@@ -1759,26 +1792,24 @@ async function updateHorseCache() {
     // Filter next 24 hours Pakistan time
     const nowPKT = new Date(Date.now() + 5 * 60 * 60 * 1000);
     const next24 = new Date(nowPKT.getTime() + 24 * 60 * 60 * 1000);
-
     finalData = finalData.filter((m) => {
       const time = new Date(m.startTime);
       return time >= nowPKT && time <= next24;
     });
 
-    // Sort by time
+    // Sort by start time
     finalData.sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
 
     horseCache = finalData;
     lastUpdate = Date.now();
-
   } catch (err) {
     console.error("Horse API Error:", err.response?.data || err.message);
   }
 }
 
-// Start Polling
-setInterval(updateHorseCache, POLL_INTERVAL);
+// Start polling
 updateHorseCache();
+setInterval(updateHorseCache, POLL_INTERVAL);
 
 // --------------------- ROUTE ---------------------
 router.get("/live/horse", (req, res) => {
