@@ -1574,14 +1574,14 @@ router.get('/live/tennis', async (req, res) => {
 let horseCache = [];
 let lastUpdate = 0;
 
-const POLL_INTERVAL = 10000; // 10 sec polling recommended
+const POLL_INTERVAL = 10000; // 10 sec polling
 const MAX_MARKET_CHUNK = 150; // batch for MarketBook calls
 
 // Country groups
 const GROUP_WIN_ONLY = ["AU", "RSA", "US", "FR"];
 const GROUP_WIN_AND_PLACE = ["GB", "IE"];
 
-// Cache last valid MarketBooks
+// Cache last known MarketBooks
 let lastKnownHorseBooks = new Map();
 
 // --------------------- TIME HELPERS ---------------------
@@ -1689,7 +1689,7 @@ async function fetchHorseMarketCatalogue(groupedEvents) {
   return allCatalogues;
 }
 
-// --------------------- FETCH MARKET BOOKS (BATCHED) ---------------------
+// --------------------- FETCH MARKET BOOKS ---------------------
 async function fetchMarketBooks(marketIds) {
   const sessionToken = await getSessionToken();
   const chunks = [];
@@ -1729,7 +1729,7 @@ async function fetchMarketBooks(marketIds) {
 
     let books = response.data[0]?.result || [];
 
-    // fallback: cache last known book
+    // Cache last known book
     books.forEach((b) => {
       if (b.runners && b.runners.length > 0) lastKnownHorseBooks.set(b.marketId, b);
       else if (lastKnownHorseBooks.has(b.marketId))
@@ -1766,8 +1766,8 @@ async function updateHorseCache() {
         country: market.event?.countryCode || "",
         match: market.event.name,
         marketType: market.description?.marketType || "",
-        startTimeObj: startPKT,                    // PKT Date object
-        startTime: formatPKT(startPKT),           // PKT string for API
+        startTimeObj: startPKT,                  // PKT Date object
+        startTime: formatPKT(startPKT),         // PKT string for API
         marketStatus: book?.status || "UNKNOWN",
         totalMatched: book?.totalMatched || 0,
         selections: market.runners.map((runner) => {
@@ -1792,23 +1792,13 @@ async function updateHorseCache() {
       };
     });
 
-   const nowUTC = new Date(); // current UTC time
-const next24hUTC = new Date(nowUTC.getTime() + 24 * 60 * 60 * 1000);
-
-finalData = finalData.filter((m) => {
-  const tUTC = new Date(m.startTimeObj); // startTimeObj is still UTC
-  return tUTC > nowUTC && tUTC <= next24hUTC;
-});
-
-// Then, for display:
-finalData = finalData.map((m) => {
-  const startPKT = toPakistanTime(m.startTimeObj);
-  return {
-    ...m,
-    startTime: formatPKT(startPKT),
-    startTimeObj: startPKT,
-  };
-});
+    // Filter next 24h
+    const nowUTC = new Date();
+    const next24hUTC = new Date(nowUTC.getTime() + 24 * 60 * 60 * 1000);
+    finalData = finalData.filter((m) => {
+      const tUTC = new Date(m.startTimeObj.getTime() - 5 * 60 * 60 * 1000); // convert PKT back to UTC
+      return tUTC > nowUTC && tUTC <= next24hUTC;
+    });
 
     // Sort by startTimeObj
     finalData.sort((a, b) => a.startTimeObj - b.startTimeObj);
