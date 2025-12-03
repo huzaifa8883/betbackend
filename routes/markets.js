@@ -2381,9 +2381,15 @@ router.get('/Navigation', async (req, res) => {
 // Ab express.listen ki jagah server.listen
 
 // --- GLOBAL CACHE ---
+/* ========= GREYHOUND FIXED VERSION ========= */
+
 let greyhoundCache = [];
 let lastUpdateGreyhound = 0;
-const POLL_INTERVAL_g = 30000; // 30 seconds
+
+const POLL_INTERVAL_g = 5000; // Greyhound requires < 10 sec polling
+
+// Store last valid MarketBooks to prevent data disappearing
+let lastKnownGreyhoundBooks = new Map();
 
 // Convert UTC → Pakistan Time
 function toPakistanTime(utcDateString) {
@@ -2405,8 +2411,8 @@ async function fetchGreyhoundEvents(eventTypeIds, countries) {
             eventTypeIds,
             marketCountries: countries,
             marketStartTime: {
-              from: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(),
-              to: new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString(), // next 48h
+              from: new Date(Date.now() - 1 * 60 * 60 * 1000).toISOString(), // last 1h
+              to: new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString() // next 12h
             },
           },
         },
@@ -2436,9 +2442,9 @@ async function fetchGreyhoundMarketCatalogue(eventIds) {
         params: {
           filter: {
             eventIds,
-            marketTypeCodes: ["WIN", "PLACE", "EACH_WAY"],
+            marketTypeCodes: ["WIN"],
           },
-          maxResults: "500",
+          maxResults: "200",
           marketProjection: ["EVENT", "RUNNER_METADATA", "MARKET_START_TIME"],
         },
         id: 2,
@@ -2456,7 +2462,7 @@ async function fetchGreyhoundMarketCatalogue(eventIds) {
   return response.data[0]?.result || [];
 }
 
-// Fetch market books
+// Fetch market books (FIXED VERSION)
 async function fetchGreyhoundMarketBooks(marketIds) {
   const sessionToken = await getSessionToken();
   const response = await axios.post(
@@ -2467,7 +2473,13 @@ async function fetchGreyhoundMarketBooks(marketIds) {
         method: "SportsAPING/v1.0/listMarketBook",
         params: {
           marketIds,
-          priceProjection: { priceData: ["EX_BEST_OFFERS"] },
+          // FIX 1: Greyhound requires full projection + virtualise
+          priceProjection: { 
+            priceData: ["EX_BEST_OFFERS", "EX_TRADED", "EX_ALL_OFFERS"],
+            virtualise: true
+          },
+          orderProjection: "ALL",
+          matchProjection: "ROLLED_UP_BY_PRICE"
         },
         id: 3,
       },
@@ -2481,14 +2493,27 @@ async function fetchGreyhoundMarketBooks(marketIds) {
     }
   );
 
-  return response.data[0]?.result || [];
+  const books = response.data[0]?.result || [];
+
+  // FIX 2: Cache last valid book per market
+  books.forEach(book => {
+    if (book.runners && book.runners.length > 0) {
+      lastKnownGreyhoundBooks.set(book.marketId, book);
+    } else {
+      // if empty → use last known snapshot
+      if (lastKnownGreyhoundBooks.has(book.marketId)) {
+        books[books.indexOf(book)] = lastKnownGreyhoundBooks.get(book.marketId);
+      }
+    }
+  });
+
+  return books;
 }
 
 // Polling function
 async function updateGreyhoundCache() {
   try {
-    // Expanded countries list for more coverage
-    const events = await fetchGreyhoundEvents(["4339"], ["AU",  "GB"]);
+    const events = await fetchGreyhoundEvents(["4339"], ["AU", "GB"]);
 
     if (!events.length) {
       greyhoundCache = [];
@@ -2509,9 +2534,11 @@ async function updateGreyhoundCache() {
     const marketBooks = await fetchGreyhoundMarketBooks(marketIds);
 
     let finalData = marketCatalogue.map(market => {
-      const book = marketBooks.find(b => b.marketId === market.marketId);
+      const book = marketBooks.find(b => b.marketId === market.marketId)
+        || lastKnownGreyhoundBooks.get(market.marketId);
+
       const event = events.find(e => e.event.id === market.event.id);
-      const startUTC = market.marketStartTime || event.event.openDate;
+      const startUTC = market.marketStartTime || event?.event.openDate;
       const pktTime = startUTC && toPakistanTime(startUTC);
 
       return {
@@ -2521,7 +2548,7 @@ async function updateGreyhoundCache() {
         marketStatus: book?.status || "UNKNOWN",
         totalMatched: book?.totalMatched || 0,
         selections: market.runners.map(runner => {
-          const runnerBook = book?.runners.find(b => b.selectionId === runner.selectionId);
+          const runnerBook = book?.runners?.find(r => r.selectionId === runner.selectionId);
           return {
             name: runner.runnerName,
             back: runnerBook?.ex?.availableToBack?.slice(0, 3) || [],
@@ -2531,27 +2558,26 @@ async function updateGreyhoundCache() {
       };
     });
 
-    // Sort by start time
-    finalData.sort((a,b) => new Date(a.startTime) - new Date(b.startTime));
+    finalData.sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
 
     greyhoundCache = finalData;
     lastUpdateGreyhound = Date.now();
-  } catch(err) {
+  } catch (err) {
     console.error("❌ Greyhound API Poll Error:", err.response?.data || err.message);
   }
 }
 
-// Start polling immediately
+// Start polling
 updateGreyhoundCache();
 setInterval(updateGreyhoundCache, POLL_INTERVAL_g);
 
 // API Route
-router.route("/live/greyhound").get((req,res) => {
+router.route("/live/greyhound").get((req, res) => {
   res.status(200).json({
     status: "success",
     count: greyhoundCache.length,
     data: greyhoundCache,
-    lastUpdate: new Date(lastUpdateGreyhound).toISOString()
+    lastUpdate: new Date(lastUpdateGreyhound).toISOString(),
   });
 });
 
