@@ -1586,15 +1586,10 @@ const GROUP_WIN_AND_PLACE = ["GB", "IE"];
 // Cache last valid MarketBooks
 let lastKnownHorseBooks = new Map();
 
-// Convert UTC → Pakistan Time
-// Convert UTC → Pakistan Time Date object
+// Convert UTC → Pakistan Time (Date object)
 function toPakistanTime(utcDateString) {
   return new Date(new Date(utcDateString).getTime() + 5 * 60 * 60 * 1000);
 }
-
-// --------------------- FILTER FUTURE 24H ONLY ---------------------
-
-
 
 // --------------------- FETCH EVENTS ---------------------
 async function fetchHorseEvents() {
@@ -1617,7 +1612,7 @@ async function fetchHorseEvents() {
               eventTypeIds: ["7"],
               marketCountries: g.countries,
               marketStartTime: {
-                from: new Date().toISOString(), // only future
+                from: new Date().toISOString(),
                 to: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
               },
             },
@@ -1762,14 +1757,15 @@ async function updateHorseCache() {
         || lastKnownHorseBooks.get(market.marketId);
 
       const startUTC = market.marketStartTime || market.event.openDate;
-      const pktTime = toPakistanTime(startUTC);
+      const startPKT = toPakistanTime(startUTC); // Date object for all comparisons
 
       return {
         marketId: market.marketId,
         country: market.event?.countryCode || "",
         match: market.event.name,
         marketType: market.description?.marketType || "",
-        startTime: pktTime.toISOString(),
+        startTimeObj: startPKT,          // keep Date object
+        startTime: startPKT.toISOString(), // ISO string for API
         marketStatus: book?.status || "UNKNOWN",
         totalMatched: book?.totalMatched || 0,
 
@@ -1794,18 +1790,17 @@ async function updateHorseCache() {
     });
 
     // --------------------- FILTER FUTURE 24H ONLY ---------------------
-   const nowPKT = new Date(Date.now() + 5 * 60 * 60 * 1000);
-const next24h = new Date(nowPKT.getTime() + 24 * 60 * 60 * 1000);
+    const nowPKT = new Date(Date.now() + 5 * 60 * 60 * 1000);
+    const next24h = new Date(nowPKT.getTime() + 24 * 60 * 60 * 1000);
 
-  finalData = finalData.filter((m) => {
-  const startPKT = new Date(m.startTime); // already PKT
-  return startPKT > nowPKT && startPKT <= next24h;
-});
-finalData.sort((a, b) => {
-  const startA = new Date(a.startTime);
-  const startB = new Date(b.startTime);
-  return startA - startB;
-});
+    finalData = finalData.filter((m) => {
+      const t = m.startTimeObj.getTime(); // use Date object
+      return t > nowPKT.getTime() && t <= next24h.getTime();
+    });
+
+    // Sort by startTimeObj
+    finalData.sort((a, b) => a.startTimeObj - b.startTimeObj);
+
     horseCache = finalData;
     lastUpdate = Date.now();
   } catch (err) {
@@ -1826,6 +1821,7 @@ router.get("/live/horse", (req, res) => {
     data: horseCache,
   });
 });
+
 
 
 const sportMap = {
