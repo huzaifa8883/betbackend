@@ -1571,13 +1571,11 @@ router.get('/live/tennis', async (req, res) => {
   }
 });
 // Global cache for horse racing data
-// Global cache for horse racing data
-// Global cache for horse racing data
 let horseCache = [];
 let lastUpdate = 0;
 
-const POLL_INTERVAL = 10000; // 10 sec polling
-const MAX_MARKET_CHUNK = 150;
+const POLL_INTERVAL = 10000; // 10 sec polling recommended
+const MAX_MARKET_CHUNK = 150; // batch for MarketBook calls
 
 // Country groups
 const GROUP_WIN_ONLY = ["AU", "RSA", "US", "FR"];
@@ -1588,8 +1586,7 @@ let lastKnownHorseBooks = new Map();
 
 // Convert UTC → Pakistan Time (Date object)
 function toPakistanTime(utcDateString) {
-  const d = new Date(utcDateString);
-  return new Date(d.getTime() + 5 * 60 * 60 * 1000);
+  return new Date(new Date(utcDateString).getTime() + 5 * 60 * 60 * 1000);
 }
 
 // --------------------- FETCH EVENTS ---------------------
@@ -1677,7 +1674,7 @@ async function fetchHorseMarketCatalogue(groupedEvents) {
     allCatalogues.push(...catalogues);
   }
 
-  // Remove duplicates
+  // Remove duplicates by marketId
   const seen = new Set();
   allCatalogues = allCatalogues.filter((m) => {
     if (seen.has(m.marketId)) return false;
@@ -1728,10 +1725,10 @@ async function fetchMarketBooks(marketIds) {
 
     let books = response.data[0]?.result || [];
 
-    books.forEach((b) => {
+    // Fallback: cache last known book
+    books.forEach((b, idx) => {
       if (b.runners && b.runners.length > 0) lastKnownHorseBooks.set(b.marketId, b);
-      else if (lastKnownHorseBooks.has(b.marketId))
-        books[books.indexOf(b)] = lastKnownHorseBooks.get(b.marketId);
+      else if (lastKnownHorseBooks.has(b.marketId)) books[idx] = lastKnownHorseBooks.get(b.marketId);
     });
 
     allBooks.push(...books);
@@ -1771,9 +1768,11 @@ async function updateHorseCache() {
         selections: market.runners.map((runner) => {
           const rb = book?.runners?.find((r) => r.selectionId === runner.selectionId);
           const md = runner.metadata || {};
-          let silkUrl = null;
-          if (md.COLOURS_IMAGE_URL) silkUrl = md.COLOURS_IMAGE_URL;
-          else if (md.COLOURS_FILENAME) silkUrl = `https://bp-silks.lhre.net/proxy/${md.COLOURS_FILENAME}`;
+          let silkUrl = md.COLOURS_IMAGE_URL
+            ? md.COLOURS_IMAGE_URL
+            : md.COLOURS_FILENAME
+              ? `https://bp-silks.lhre.net/proxy/${md.COLOURS_FILENAME}`
+              : null;
 
           return {
             selectionId: runner.selectionId,
@@ -1788,15 +1787,16 @@ async function updateHorseCache() {
       };
     });
 
-    // --------------------- FILTER NEXT 24H ---------------------
+    // --------------------- FILTER NEXT 24H & DEDUPLICATE ---------------------
     const nowPKT = new Date(Date.now() + 5 * 60 * 60 * 1000);
     const next24h = new Date(nowPKT.getTime() + 24 * 60 * 60 * 1000);
 
     finalData = finalData
-      .filter((m) => {
-        const t = m.startTimeObj.getTime();
-        return t > nowPKT.getTime() && t <= next24h.getTime();
-      })
+      // remove duplicate marketIds
+      .filter((m, idx, arr) => arr.findIndex(x => x.marketId === m.marketId) === idx)
+      // next 24h
+      .filter(m => m.startTimeObj.getTime() > nowPKT.getTime() && m.startTimeObj.getTime() <= next24h.getTime())
+      // sort by startTimeObj
       .sort((a, b) => a.startTimeObj.getTime() - b.startTimeObj.getTime());
 
     horseCache = finalData;
