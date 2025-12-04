@@ -2048,33 +2048,78 @@ if (evTypeId == 4339) { // Greyhound
             OtherRaceMarkets: []
         };
 
-        allMarkets.forEach(cat => {
-            const book = allBooks.find(b => b.marketId === cat.marketId);
-            if (!book) return;
+        // allMarkets.forEach(cat => {
+        //     const book = allBooks.find(b => b.marketId === cat.marketId);
+        //     if (!book) return;
 
-            const mapped = mapMarketData(cat, book, eventTypeId);
-            if (!mapped) return;
+        //     const mapped = mapMarketData(cat, book, eventTypeId);
+        //     if (!mapped) return;
 
-            const mType = cat.description?.marketType || "";
-            const mName = cat.marketName.toLowerCase();
+        //     const mType = cat.description?.marketType || "";
+        //     const mName = cat.marketName.toLowerCase();
 
-            if (sportName === "Cricket") {
-                if (mType === "MATCH_ODDS") marketGroups.Catalog.push(mapped);
-                else if (mType === "BOOKMAKER" || mName.includes("bookmaker")) marketGroups.BookmakerMarkets.push(mapped);
-                else if (mType === "TOSS") marketGroups.TossMarkets.push(mapped);
-                else if (mType === "ODD_FIGURE") marketGroups.OddFigureMarkets.push(mapped);
-                else if (mType === "FIGURE") marketGroups.FigureMarkets.push(mapped);
-                else if (mType === "LINE") marketGroups.FancyMarkets.push(mapped);
-                else marketGroups.OtherMarkets.push(mapped);
+        //     if (sportName === "Cricket") {
+        //         if (mType === "MATCH_ODDS") marketGroups.Catalog.push(mapped);
+        //         else if (mType === "BOOKMAKER" || mName.includes("bookmaker")) marketGroups.BookmakerMarkets.push(mapped);
+        //         else if (mType === "TOSS") marketGroups.TossMarkets.push(mapped);
+        //         else if (mType === "ODD_FIGURE") marketGroups.OddFigureMarkets.push(mapped);
+        //         else if (mType === "FIGURE") marketGroups.FigureMarkets.push(mapped);
+        //         else if (mType === "LINE") marketGroups.FancyMarkets.push(mapped);
+        //         else marketGroups.OtherMarkets.push(mapped);
 
-            } else if (eventTypeId == 7 || eventTypeId == 4339) {
+        //     } else if (eventTypeId == 7 || eventTypeId == 4339) {
+        //         marketGroups.OtherRaceMarkets.push(mapped);
+
+        //     } else {
+        //         if (mType === "MATCH_ODDS") marketGroups.Catalog.push(mapped);
+        //         else marketGroups.OtherMarkets.push(mapped);
+        //     }
+        // });
+      allMarkets.forEach(cat => {
+    const book = allBooks.find(b => b.marketId === cat.marketId);
+    if (!book) return;
+
+    const mapped = mapMarketData(cat, book, eventTypeId);
+    if (!mapped) return;
+
+    const mType = cat.description?.marketType || "";
+    const mName = cat.marketName.toUpperCase();
+
+    // Determine event country
+    const eventName = cat.event?.name || "";
+    const venue = cat.event?.venue || "";
+    let countryCode = "uk";
+    if (eventName.includes("US") || venue.includes("US")) countryCode = "us";
+    else if (eventName.includes("AU") || venue.includes("AU")) countryCode = "au";
+    else if (eventName.includes("GB") || venue.includes("UK")) countryCode = "gb";
+
+    if (sportName === "Cricket") {
+        if (mType === "MATCH_ODDS") marketGroups.Catalog.push(mapped);
+        else if (mType === "BOOKMAKER" || mName.includes("BOOKMAKER")) marketGroups.BookmakerMarkets.push(mapped);
+        else if (mType === "TOSS") marketGroups.TossMarkets.push(mapped);
+        else if (mType === "ODD_FIGURE") marketGroups.OddFigureMarkets.push(mapped);
+        else if (mType === "FIGURE") marketGroups.FigureMarkets.push(mapped);
+        else if (mType === "LINE") marketGroups.FancyMarkets.push(mapped);
+        else marketGroups.OtherMarkets.push(mapped);
+
+    } else if (eventTypeId == 7) { // Horse Racing
+        if (countryCode === "gb") {
+            // GB races → only WIN & PLACE markets
+            if (mName === "WIN" || mName === "PLACE") {
                 marketGroups.OtherRaceMarkets.push(mapped);
-
-            } else {
-                if (mType === "MATCH_ODDS") marketGroups.Catalog.push(mapped);
-                else marketGroups.OtherMarkets.push(mapped);
             }
-        });
+        } else {
+            // Non-GB Horse Racing → push all markets
+            marketGroups.OtherRaceMarkets.push(mapped);
+        }
+    } else if (eventTypeId == 4339) { // Greyhound
+        marketGroups.OtherRaceMarkets.push(mapped);
+    } else {
+        if (mType === "MATCH_ODDS") marketGroups.Catalog.push(mapped);
+        else marketGroups.OtherMarkets.push(mapped);
+    }
+});
+
 
         const subMarkets = [
             ...marketGroups.BookmakerMarkets,
