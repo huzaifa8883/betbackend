@@ -1962,13 +1962,8 @@ let trapColor = null;
 // let jockeyName = null;
 // let trainerName = null;
 
-let clothNumber = null;
-let jockeyName = null;
-let trainerName = null;
-
-let coloursDescription = null;
-let coloursImage = null;
-let silkColor = null;
+// Pehle se define kiye hue variables:
+// let clothNumber, jockeyName, trainerName, coloursDescription, coloursImage, silkColor;
 
 if (evTypeId == 4339) { // Greyhound
 
@@ -2002,6 +1997,7 @@ if (evTypeId == 4339) { // Greyhound
     coloursDescription = md.COLOURS_DESCRIPTION || md.WEARING || null;
     coloursImage = silkColor;
 }
+
 
 
                     return {
