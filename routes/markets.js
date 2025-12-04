@@ -1911,14 +1911,13 @@ router.get('/catalog2', async (req, res) => {
                     const back = runnerBook?.ex?.availableToBack || [];
                     const lay = runnerBook?.ex?.availableToLay || [];
 // Declare ALL variables at top so they never go "not defined"
-let silkColor = null;  // add this at the top
-
 let clothNumber = null;
 let jockeyName = null;
 let trainerName = null;
 
 let coloursDescription = null;
 let coloursImage = null;
+let silkColor = null;
 
 if (evTypeId == 7) { // Horse Racing
 
@@ -1926,30 +1925,31 @@ if (evTypeId == 7) { // Horse Racing
     jockeyName = md.JOCKEY_NAME || null;
     trainerName = md.TRAINER_NAME || null;
 
-    const countryCode = (md.COUNTRY_CODE || md.COUNTRY || "").toUpperCase();
+    // ======================
+    // Determine country based on event / venue (like Greyhound)
+    // ======================
+    let countryCode = "uk"; // default
+    const eventName = catalog?.event?.name || "";
+    const venue = catalog?.event?.venue || "";
+
+    if (eventName.includes("US") || venue.includes("US")) countryCode = "us";
+    else if (eventName.includes("AU") || venue.includes("AU")) countryCode = "au";
+    else if (eventName.includes("GB") || venue.includes("UK")) countryCode = "uk";
 
     // ======================
-    // IMAGE BASED ON COUNTRY
+    // Construct silk image URL
     // ======================
-    if (countryCode === "US" && clothNumber) {
-        coloursImage = `https://bp-silks.lhre.net/saddle/us/${clothNumber}.svg`;
-    }
-    else if ((countryCode === "AU" || countryCode === "FR" || countryCode === "GB") && md.COLOURS_FILENAME) {
-        coloursImage = `https://bp-silks.lhre.net/proxy/${md.COLOURS_FILENAME}`;
-    }
-    else {
-        coloursImage = null;
+    if (clothNumber) {
+        silkColor = `https://bp-silks.lhre.net/saddle/${countryCode}/${clothNumber}.svg`;
+    } else {
+        silkColor = `https://bp-silks.lhre.net/saddle/${countryCode}/default.svg`;
     }
 
     // ======================
-    // DESCRIPTION
+    // Description
     // ======================
-    coloursDescription = md.WEARING || md.COLOURS_DESCRIPTION || null;
-
-    // ======================
-    // optional: keep silkColor in sync
-    // ======================
-    silkColor = coloursImage;
+    coloursDescription = md.COLOURS_DESCRIPTION || md.WEARING || null;
+    coloursImage = silkColor;
 }
 
 
