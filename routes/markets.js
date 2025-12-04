@@ -1910,37 +1910,57 @@ router.get('/catalog2', async (req, res) => {
 
                     const back = runnerBook?.ex?.availableToBack || [];
                     const lay = runnerBook?.ex?.availableToLay || [];
-if (evTypeId == 7) { // Horse Racing
-    clothNumber = md.CLOTH_NUMBER || null;
-
-    // Try Betfair-provided silk image first
-    if (md.COLOURS_IMAGE_URL) {
-        silkColor = md.COLOURS_IMAGE_URL;
-    } 
-    else if (md.COLOURS_FILENAME) {
-        silkColor = `https://bp-silks.lhre.net/proxy/${md.COLOURS_FILENAME}`;
-    }
-    else {
-        silkColor = null;
-    }
-
-    coloursDescription = md.COLOURS_DESCRIPTION || null;
-    coloursImage = silkColor;
-
-    jockeyName = md.JOCKEY_NAME || null;
-    trainerName = md.TRAINER_NAME || null;
-}
-
-
-
-// MUST be declared BEFORE any IF blocks
+// Declare ALL variables at top so they never go "not defined"
 let clothNumber = null;
-let trapColor = null;
-let silkColor = null;
-let coloursDescription = null;
-let coloursImage = null;
 let jockeyName = null;
 let trainerName = null;
+
+let coloursDescription = null;
+let coloursImage = null;
+let silkColor = null;
+
+if (evTypeId == 7) { // Horse Racing
+
+    // Assign values inside the block
+    clothNumber = md.CLOTH_NUMBER || null;
+    jockeyName = md.JOCKEY_NAME || null;
+    trainerName = md.TRAINER_NAME || null;
+
+    const countryCode = md.COUNTRY_CODE || md.COUNTRY || "UNKNOWN";
+
+    switch (countryCode) {
+        case "GB":
+        case "US":
+        case "RSA":
+            if (md.COLOURS_IMAGE_URL) {
+                silkColor = md.COLOURS_IMAGE_URL;
+            } 
+            else if (md.COLOURS_FILENAME) {
+                silkColor = `https://bp-silks.lhre.net/proxy/${md.COLOURS_FILENAME}`;
+            }
+            coloursDescription = md.COLOURS_DESCRIPTION || null;
+            break;
+
+        case "AU":
+        case "FR":
+            coloursDescription = md.WEARING || md.COLOURS_DESCRIPTION || null;
+            break;
+
+        default:
+            coloursDescription = md.COLOURS_DESCRIPTION || null;
+    }
+
+    coloursImage = silkColor; // safe now
+}
+
+// MUST be declared BEFORE any IF blocks
+// let clothNumber = null;
+let trapColor = null;
+// let silkColor = null;
+// let coloursDescription = null;
+// let coloursImage = null;
+// let jockeyName = null;
+// let trainerName = null;
 
 if (evTypeId == 4339) { // Greyhound
 
