@@ -1910,14 +1910,16 @@ router.get('/catalog2', async (req, res) => {
 
                     const back = runnerBook?.ex?.availableToBack || [];
                     const lay = runnerBook?.ex?.availableToLay || [];
+// Function ya main scope ke start mein
+let silkColor = null; // <- declare yahan
+
 if (evTypeId == 7) { // Horse Racing
     let clothNumber = md.CLOTH_NUMBER || null;
     let jockeyName = md.JOCKEY_NAME || null;
-    let trainerName = md.TRAINER_NAME || null;
+    let trainerName = md.JOCKEY_NAME || null;
 
     let coloursDescription = null;
     let coloursImage = null;
-    let silkColor = null;  // <-- declare here
 
     let countryCode = md.COUNTRY_CODE || md.COUNTRY || "UNKNOWN"; // fallback
 
@@ -1929,8 +1931,6 @@ if (evTypeId == 7) { // Horse Racing
                 silkColor = md.COLOURS_IMAGE_URL;
             } else if (md.COLOURS_FILENAME) {
                 silkColor = `https://bp-silks.lhre.net/proxy/${md.COLOURS_FILENAME}`;
-            } else {
-                silkColor = null;
             }
             coloursDescription = md.COLOURS_DESCRIPTION || null;
             break;
@@ -1945,6 +1945,7 @@ if (evTypeId == 7) { // Horse Racing
     coloursImage = silkColor; // ab ye defined hai
 }
 
+// Ab chahe ye function ke outer scope mein use karo, silkColor defined hai
 
 
 if (evTypeId == 4339) { // Greyhound
