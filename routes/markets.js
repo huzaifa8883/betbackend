@@ -2103,16 +2103,20 @@ if (evTypeId == 4339) { // Greyhound
         else marketGroups.OtherMarkets.push(mapped);
 
     } else if (eventTypeId == 7) { // Horse Racing
-        if (countryCode === "gb") {
-            // GB races → only WIN & PLACE markets
-            if (mName === "WIN" || mName === "PLACE") {
-                marketGroups.OtherRaceMarkets.push(mapped);
-            }
-        } else {
-            // Non-GB Horse Racing → push all markets
+    if (countryCode === "gb") {
+        // GB races → push only WIN & PLACE markets
+        if (mType === "WIN") {
+            mapped.marketName = "WIN";  // override for frontend
+            marketGroups.OtherRaceMarkets.push(mapped);
+        } else if (mType === "PLACE" || mType === "OTHER_PLACE") {
+            mapped.marketName = "PLACE";  // override for frontend
             marketGroups.OtherRaceMarkets.push(mapped);
         }
-    } else if (eventTypeId == 4339) { // Greyhound
+    } else {
+        // Non-GB Horse Racing → push all markets
+        marketGroups.OtherRaceMarkets.push(mapped);
+    }
+} else if (eventTypeId == 4339) { // Greyhound
         marketGroups.OtherRaceMarkets.push(mapped);
     } else {
         if (mType === "MATCH_ODDS") marketGroups.Catalog.push(mapped);
