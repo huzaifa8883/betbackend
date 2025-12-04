@@ -1689,7 +1689,7 @@ async function fetchMarketBooks(marketIds) {
 // Polling function
 async function updateHorseCache() {
   try {
-    const horseEvents = await fetchEvents(["7"], ["AU", "US", "FR","RSA","GB"]);
+    const horseEvents = await fetchEvents(["7"], ["AU", "US", "FR"]);
 
     if (!horseEvents.length) {
       horseCache = [];
@@ -1910,57 +1910,31 @@ router.get('/catalog2', async (req, res) => {
 
                     const back = runnerBook?.ex?.availableToBack || [];
                     const lay = runnerBook?.ex?.availableToLay || [];
-// Function ya main scope ke start mein
-// Declare ALL variables at top so they never go "not defined"
-let clothNumber = null;
-let jockeyName = null;
-let trainerName = null;
-
-let coloursDescription = null;
-let coloursImage = null;
-let silkColor = null;
-
 if (evTypeId == 7) { // Horse Racing
-
-    // Assign values inside the block
     clothNumber = md.CLOTH_NUMBER || null;
-    jockeyName = md.JOCKEY_NAME || null;
-    trainerName = md.TRAINER_NAME || null;
 
-    const countryCode = md.COUNTRY_CODE || md.COUNTRY || "UNKNOWN";
-
-    switch (countryCode) {
-        case "GB":
-        case "US":
-        case "RSA":
-            if (md.COLOURS_IMAGE_URL) {
-                silkColor = md.COLOURS_IMAGE_URL;
-            } 
-            else if (md.COLOURS_FILENAME) {
-                silkColor = `https://bp-silks.lhre.net/proxy/${md.COLOURS_FILENAME}`;
-            }
-            coloursDescription = md.COLOURS_DESCRIPTION || null;
-            break;
-
-        case "AU":
-        case "FR":
-            coloursDescription = md.WEARING || md.COLOURS_DESCRIPTION || null;
-            break;
-
-        default:
-            coloursDescription = md.COLOURS_DESCRIPTION || null;
+    // Try Betfair-provided silk image first
+    if (md.COLOURS_IMAGE_URL) {
+        silkColor = md.COLOURS_IMAGE_URL;
+    } 
+    else if (md.COLOURS_FILENAME) {
+        silkColor = `https://bp-silks.lhre.net/proxy/${md.COLOURS_FILENAME}`;
+    }
+    else {
+        silkColor = null;
     }
 
-    coloursImage = silkColor; // safe now
+    coloursDescription = md.COLOURS_DESCRIPTION || null;
+    coloursImage = silkColor;
+
+    jockeyName = md.JOCKEY_NAME || null;
+    trainerName = md.TRAINER_NAME || null;
 }
 
-// Ab chahe ye function ke outer scope mein use karo, silkColor defined hai
 
 
 if (evTypeId == 4339) { // Greyhound
-
-    const trap = md.TRAP || runner.runnerName?.match(/\d+/)?.[0] || null;
-
+    const trap = md.TRAP || runner.runnerName?.match(/\d+/)?.[0]; // TRAP missing ho to name se try
     const trapColors = {
         1: "red",
         2: "blue",
@@ -1970,29 +1944,21 @@ if (evTypeId == 4339) { // Greyhound
         6: "green"
     };
 
-    // Assign values safely
-    clothNumber = trap;
-    trapColor = trapColors[trap] || "grey";
+    clothNumber = trap || null;
+    trapColor = trapColors[trap] || "grey"; // fallback color
 
-    // Determine country folder
-    let countryCode = "uk"; 
-    const eventName = catalog?.event?.name || "";
-    const venue = catalog?.event?.venue || "";
+    // Determine country folder for lhre.net
+    let countryCode = "uk"; // default
+    const eventName = catalog.event?.name || "";
+    const venue = catalog.event?.venue || "";
 
-    if (eventName.includes("US") || venue.includes("US")) {
-        countryCode = "us";
-    } 
-    else if (eventName.includes("AU") || venue.includes("AU")) {
-        countryCode = "au";
-    } 
-    else if (eventName.includes("GB") || venue.includes("UK")) {
-        countryCode = "uk";
-    }
+    if (eventName.includes("US") || venue.includes("US")) countryCode = "us";
+    else if (eventName.includes("AU") || venue.includes("AU")) countryCode = "au";
+    else if (eventName.includes("GB") || venue.includes("UK")) countryCode = "uk";
 
-    // Build saddle image
-    silkColor = clothNumber 
-        ? `https://bp-silks.lhre.net/saddle/${countryCode}/${clothNumber}.svg`
-        : `https://bp-silks.lhre.net/saddle/${countryCode}/default.svg`;
+    // Construct image URL using lhre.net with country
+    silkColor = clothNumber ? `https://bp-silks.lhre.net/saddle/${countryCode}/${clothNumber}.svg` 
+                             : `https://bp-silks.lhre.net/saddle/${countryCode}/default.svg`;
 
     coloursDescription = trapColor;
     coloursImage = silkColor;
@@ -3192,6 +3158,13 @@ module.exports  ={
 
 
 
+
+
+
+
+
+
+      
 
 
 
