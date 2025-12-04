@@ -1933,8 +1933,19 @@ if (evTypeId == 7) { // Horse Racing
 
 
 
+// MUST be declared BEFORE any IF blocks
+let clothNumber = null;
+let trapColor = null;
+let silkColor = null;
+let coloursDescription = null;
+let coloursImage = null;
+let jockeyName = null;
+let trainerName = null;
+
 if (evTypeId == 4339) { // Greyhound
-    const trap = md.TRAP || runner.runnerName?.match(/\d+/)?.[0]; // TRAP missing ho to name se try
+
+    const trap = md.TRAP || runner.runnerName?.match(/\d+/)?.[0] || null;
+
     const trapColors = {
         1: "red",
         2: "blue",
@@ -1944,21 +1955,20 @@ if (evTypeId == 4339) { // Greyhound
         6: "green"
     };
 
-    clothNumber = trap || null;
-    trapColor = trapColors[trap] || "grey"; // fallback color
+    clothNumber = trap; 
+    trapColor = trapColors[trap] || "grey";
 
-    // Determine country folder for lhre.net
-    let countryCode = "uk"; // default
-    const eventName = catalog.event?.name || "";
-    const venue = catalog.event?.venue || "";
+    let countryCode = "uk";
+    const eventName = catalog?.event?.name || "";
+    const venue = catalog?.event?.venue || "";
 
     if (eventName.includes("US") || venue.includes("US")) countryCode = "us";
     else if (eventName.includes("AU") || venue.includes("AU")) countryCode = "au";
     else if (eventName.includes("GB") || venue.includes("UK")) countryCode = "uk";
 
-    // Construct image URL using lhre.net with country
-    silkColor = clothNumber ? `https://bp-silks.lhre.net/saddle/${countryCode}/${clothNumber}.svg` 
-                             : `https://bp-silks.lhre.net/saddle/${countryCode}/default.svg`;
+    silkColor = clothNumber 
+        ? `https://bp-silks.lhre.net/saddle/${countryCode}/${clothNumber}.svg`
+        : `https://bp-silks.lhre.net/saddle/${countryCode}/default.svg`;
 
     coloursDescription = trapColor;
     coloursImage = silkColor;
@@ -1966,7 +1976,6 @@ if (evTypeId == 4339) { // Greyhound
     jockeyName = null;
     trainerName = md.TRAINER_NAME || null;
 }
-
 
                     return {
                         marketId: catalogItem.marketId,
