@@ -1911,15 +1911,14 @@ router.get('/catalog2', async (req, res) => {
                     const back = runnerBook?.ex?.availableToBack || [];
                     const lay = runnerBook?.ex?.availableToLay || [];
 if (evTypeId == 7) { // Horse Racing
-    clothNumber = md.CLOTH_NUMBER || null;
-    jockeyName = md.JOCKEY_NAME || null;
-    trainerName = md.TRAINER_NAME || null;
+    let clothNumber = md.CLOTH_NUMBER || null;
+    let jockeyName = md.JOCKEY_NAME || null;
+    let trainerName = md.TRAINER_NAME || null;
 
-    // Initialize
-    coloursDescription = null;
-    coloursImage = null;
+    let coloursDescription = null;
+    let coloursImage = null;
+    let silkColor = null;  // <-- declare here
 
-    // Country-wise handling
     let countryCode = md.COUNTRY_CODE || md.COUNTRY || "UNKNOWN"; // fallback
 
     switch(countryCode) {
@@ -1927,9 +1926,11 @@ if (evTypeId == 7) { // Horse Racing
         case "US":
         case "RSA":
             if (md.COLOURS_IMAGE_URL) {
-                coloursImage = md.COLOURS_IMAGE_URL;
+                silkColor = md.COLOURS_IMAGE_URL;
             } else if (md.COLOURS_FILENAME) {
-                coloursImage = `https://bp-silks.lhre.net/proxy/${md.COLOURS_FILENAME}`;
+                silkColor = `https://bp-silks.lhre.net/proxy/${md.COLOURS_FILENAME}`;
+            } else {
+                silkColor = null;
             }
             coloursDescription = md.COLOURS_DESCRIPTION || null;
             break;
@@ -1940,6 +1941,8 @@ if (evTypeId == 7) { // Horse Racing
         default:
             coloursDescription = md.COLOURS_DESCRIPTION || null;
     }
+
+    coloursImage = silkColor; // ab ye defined hai
 }
 
 
