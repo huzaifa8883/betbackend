@@ -1925,31 +1925,29 @@ if (evTypeId == 7) { // Horse Racing
     jockeyName = md.JOCKEY_NAME || null;
     trainerName = md.TRAINER_NAME || null;
 
-    const countryCode = (md.COUNTRY_CODE || md.COUNTRY || "").toUpperCase();
+    // ======================
+    // IMAGE PRIORITY (PURE BETFAIR)
+    // ======================
 
-    // ====================== PRIORITY 1: PNG PROXY (Betfair filename) ======================
-    if (md.COLOURS_FILENAME) {
-        silkColor = `https://bp-silks.lhre.net/proxy/${md.COLOURS_FILENAME}`;
-    }
-
-    // ====================== PRIORITY 2: DIRECT IMAGE URL ======================
-    else if (md.COLOURS_IMAGE_URL) {
+    if (md.COLOURS_IMAGE_URL) {
+        // Betfair sends ready image link
         silkColor = md.COLOURS_IMAGE_URL;
     }
 
-    // ====================== PRIORITY 3: USA → saddle SVG ======================
-    else if (countryCode === "US" && clothNumber) {
-        // US always uses this pattern:
-        // https://bp-silks.lhre.net/saddle/us/1.svg
-        silkColor = `https://bp-silks.lhre.net/saddle/us/${clothNumber}.svg`;
+    else if (md.COLOURS_FILENAME) {
+        // Betfair sends full path inside filename (not only a name)
+        // Use EXACT Betfair filename as it is
+        silkColor = md.COLOURS_FILENAME;
     }
 
-    // ====================== PRIORITY 4: DEFAULT FALLBACK ======================
     else {
-        silkColor = `https://bp-silks.lhre.net/saddle/uk/default.svg`;
+        // REAL fallback only when Betfair sends nothing
+        silkColor = null;
     }
 
-    // Descriptions
+    // ======================
+    // DESCRIPTION PRIORITY
+    // ======================
     coloursDescription =
         md.WEARING ||
         md.COLOURS_DESCRIPTION ||
