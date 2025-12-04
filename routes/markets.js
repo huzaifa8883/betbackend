@@ -1911,38 +1911,47 @@ router.get('/catalog2', async (req, res) => {
                     const back = runnerBook?.ex?.availableToBack || [];
                     const lay = runnerBook?.ex?.availableToLay || [];
 // Function ya main scope ke start mein
-let silkColor = null; // <- declare yahan
+// Declare ALL variables at top so they never go "not defined"
+let clothNumber = null;
+let jockeyName = null;
+let trainerName = null;
+
+let coloursDescription = null;
+let coloursImage = null;
+let silkColor = null;
 
 if (evTypeId == 7) { // Horse Racing
-    let clothNumber = md.CLOTH_NUMBER || null;
-    let jockeyName = md.JOCKEY_NAME || null;
-    let trainerName = md.JOCKEY_NAME || null;
 
-    let coloursDescription = null;
-    let coloursImage = null;
+    // Assign values inside the block
+    clothNumber = md.CLOTH_NUMBER || null;
+    jockeyName = md.JOCKEY_NAME || null;
+    trainerName = md.TRAINER_NAME || null;
 
-    let countryCode = md.COUNTRY_CODE || md.COUNTRY || "UNKNOWN"; // fallback
+    const countryCode = md.COUNTRY_CODE || md.COUNTRY || "UNKNOWN";
 
-    switch(countryCode) {
+    switch (countryCode) {
         case "GB":
         case "US":
         case "RSA":
             if (md.COLOURS_IMAGE_URL) {
                 silkColor = md.COLOURS_IMAGE_URL;
-            } else if (md.COLOURS_FILENAME) {
+            } 
+            else if (md.COLOURS_FILENAME) {
                 silkColor = `https://bp-silks.lhre.net/proxy/${md.COLOURS_FILENAME}`;
             }
             coloursDescription = md.COLOURS_DESCRIPTION || null;
             break;
+
         case "AU":
         case "FR":
             coloursDescription = md.WEARING || md.COLOURS_DESCRIPTION || null;
             break;
+
         default:
             coloursDescription = md.COLOURS_DESCRIPTION || null;
     }
 
-    coloursImage = silkColor; // ab ye defined hai
+    coloursImage = silkColor; // safe now
 }
 
 // Ab chahe ye function ke outer scope mein use karo, silkColor defined hai
