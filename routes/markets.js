@@ -1962,23 +1962,24 @@ let trapColor = null;
 // let jockeyName = null;
 // let trainerName = null;
 
+let clothNumber = null;
+let jockeyName = null;
+let trainerName = null;
+
+let coloursDescription = null;
+let coloursImage = null;
+let silkColor = null;
+
 if (evTypeId == 4339) { // Greyhound
 
-    const trap = md.TRAP || runner.runnerName?.match(/\d+/)?.[0] || null;
+    clothNumber = md.TRAP || runner.runnerName?.match(/\d+/)?.[0] || null;
+    jockeyName = null; // Greyhound me usually jockey nahi
+    trainerName = md.TRAINER_NAME || null;
 
-    const trapColors = {
-        1: "red",
-        2: "blue",
-        3: "white",
-        4: "black",
-        5: "orange",
-        6: "green"
-    };
-
-    clothNumber = trap; 
-    trapColor = trapColors[trap] || "grey";
-
-    let countryCode = "uk";
+    // ======================
+    // Determine country based on event / venue
+    // ======================
+    let countryCode = "uk"; // default
     const eventName = catalog?.event?.name || "";
     const venue = catalog?.event?.venue || "";
 
@@ -1986,16 +1987,22 @@ if (evTypeId == 4339) { // Greyhound
     else if (eventName.includes("AU") || venue.includes("AU")) countryCode = "au";
     else if (eventName.includes("GB") || venue.includes("UK")) countryCode = "uk";
 
-    silkColor = clothNumber 
-        ? `https://bp-silks.lhre.net/saddle/${countryCode}/${clothNumber}.svg`
-        : `https://bp-silks.lhre.net/saddle/${countryCode}/default.svg`;
+    // ======================
+    // Construct silk image URL
+    // ======================
+    if (clothNumber) {
+        silkColor = `https://bp-silks.lhre.net/saddle/${countryCode}/${clothNumber}.svg`;
+    } else {
+        silkColor = `https://bp-silks.lhre.net/saddle/${countryCode}/default.svg`;
+    }
 
-    coloursDescription = trapColor;
+    // ======================
+    // Description
+    // ======================
+    coloursDescription = md.COLOURS_DESCRIPTION || md.WEARING || null;
     coloursImage = silkColor;
-
-    jockeyName = null;
-    trainerName = md.TRAINER_NAME || null;
 }
+
 
                     return {
                         marketId: catalogItem.marketId,
