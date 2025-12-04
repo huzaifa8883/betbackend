@@ -1920,6 +1920,8 @@ if (evTypeId == 7) { // Horse Racing
     coloursImage = null;
 
     // Country-wise handling
+    let countryCode = md.COUNTRY_CODE || md.COUNTRY || "UNKNOWN"; // fallback
+
     switch(countryCode) {
         case "GB":
         case "US":
