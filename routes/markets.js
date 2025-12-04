@@ -1911,6 +1911,8 @@ router.get('/catalog2', async (req, res) => {
                     const back = runnerBook?.ex?.availableToBack || [];
                     const lay = runnerBook?.ex?.availableToLay || [];
 // Declare ALL variables at top so they never go "not defined"
+let silkColor = null;  // add this at the top
+
 let clothNumber = null;
 let jockeyName = null;
 let trainerName = null;
@@ -1929,17 +1931,13 @@ if (evTypeId == 7) { // Horse Racing
     // ======================
     // IMAGE BASED ON COUNTRY
     // ======================
-
     if (countryCode === "US" && clothNumber) {
-        // US races → saddle SVG
         coloursImage = `https://bp-silks.lhre.net/saddle/us/${clothNumber}.svg`;
     }
     else if ((countryCode === "AU" || countryCode === "FR" || countryCode === "GB") && md.COLOURS_FILENAME) {
-        // AU / FR / GB races → proxy PNG
         coloursImage = `https://bp-silks.lhre.net/proxy/${md.COLOURS_FILENAME}`;
     }
     else {
-        // fallback (optional)
         coloursImage = null;
     }
 
@@ -1947,8 +1945,12 @@ if (evTypeId == 7) { // Horse Racing
     // DESCRIPTION
     // ======================
     coloursDescription = md.WEARING || md.COLOURS_DESCRIPTION || null;
-}
 
+    // ======================
+    // optional: keep silkColor in sync
+    // ======================
+    silkColor = coloursImage;
+}
 
 
 // MUST be declared BEFORE any IF blocks
