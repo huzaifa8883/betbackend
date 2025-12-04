@@ -1921,37 +1921,56 @@ let silkColor = null;
 
 if (evTypeId == 7) { // Horse Racing
 
-    // Assign values inside the block
     clothNumber = md.CLOTH_NUMBER || null;
     jockeyName = md.JOCKEY_NAME || null;
     trainerName = md.TRAINER_NAME || null;
 
-    const countryCode = md.COUNTRY_CODE || md.COUNTRY || "UNKNOWN";
+    const countryCode = (md.COUNTRY_CODE || md.COUNTRY || "").toUpperCase();
 
-    switch (countryCode) {
-        case "GB":
-        case "US":
-        case "RSA":
-            if (md.COLOURS_IMAGE_URL) {
-                silkColor = md.COLOURS_IMAGE_URL;
-            } 
-            else if (md.COLOURS_FILENAME) {
-                silkColor = `https://bp-silks.lhre.net/proxy/${md.COLOURS_FILENAME}`;
-            }
-            coloursDescription = md.COLOURS_DESCRIPTION || null;
-            break;
+    // ====================== USA ======================
+    if (countryCode === "US") {
+        silkColor = clothNumber 
+            ? `https://bp-silks.lhre.net/saddle/us/${clothNumber}.svg`
+            : `https://bp-silks.lhre.net/saddle/us/default.svg`;
 
-        case "AU":
-        case "FR":
-            coloursDescription = md.WEARING || md.COLOURS_DESCRIPTION || null;
-            break;
-
-        default:
-            coloursDescription = md.COLOURS_DESCRIPTION || null;
+        coloursDescription = md.COLOURS_DESCRIPTION || null;
     }
 
-    coloursImage = silkColor; // safe now
+    // ========== AU / FR / GB (proxy PNG always) ==========
+    else if (countryCode === "AU" || countryCode === "FR" || countryCode === "GB") {
+
+        if (md.COLOURS_FILENAME) {
+            silkColor = `https://bp-silks.lhre.net/proxy/${md.COLOURS_FILENAME}`;
+        }
+        else if (md.COLOURS_IMAGE_URL) {
+            silkColor = md.COLOURS_IMAGE_URL;
+        }
+        else {
+            // force fallback default proxy, country folder not needed
+            silkColor = `https://bp-silks.lhre.net/saddle/uk/default.svg`;
+        }
+
+        coloursDescription = md.WEARING || md.COLOURS_DESCRIPTION || null;
+    }
+
+    // ================= RSA + OTHER ======================
+    else {
+        if (md.COLOURS_IMAGE_URL) {
+            silkColor = md.COLOURS_IMAGE_URL;
+        }
+        else if (md.COLOURS_FILENAME) {
+            silkColor = `https://bp-silks.lhre.net/proxy/${md.COLOURS_FILENAME}`;
+        }
+        else {
+            silkColor = `https://bp-silks.lhre.net/saddle/uk/default.svg`;
+        }
+
+        coloursDescription = md.COLOURS_DESCRIPTION || null;
+    }
+
+    coloursImage = silkColor;
 }
+
 
 // MUST be declared BEFORE any IF blocks
 // let clothNumber = null;
