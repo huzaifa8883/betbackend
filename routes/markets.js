@@ -9,6 +9,7 @@ const router = express.Router();
 const mongoose = require('mongoose');
 // const config = require('../config');
 const axios = require('axios'); // Yeh neeche likha hua hai
+const https = require('https');
 const cache = new Map();
 const { settleEventBets, autoMatchPendingBets } = require('./Orders'); // Import settleEventBets and autoMatchPendingBets functions
 const mockPopularMarkets = [
@@ -86,17 +87,21 @@ async function getOrSetCache(key, ttlSeconds, fetcher) {
 
     return data;
 }
+
 router.get('/get-match', async (req, res) => {
     try {
         const matchId = req.query.matchId || '34204356'; // Default matchId
         const url = `https://gold3patti.biz:4000/cricket/fetchmatch?match=${matchId}`;
 
-        const response = await axios.get(url);
+        // HTTPS agent with SSL verification disabled
+        const httpsAgent = new https.Agent({ rejectUnauthorized: false });
+
+        const response = await axios.get(url, { httpsAgent });
         const data = response.data;
 
         res.json(data);
     } catch (error) {
-        console.error(error);
+        console.error(error.message);
         res.status(500).json({ error: 'Failed to fetch match data' });
     }
 });
