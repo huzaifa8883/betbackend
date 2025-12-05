@@ -1713,7 +1713,7 @@ async function fetchMarketBooks(marketIds) {
 // Polling function
 async function updateHorseCache() {
   try {
-const horseEvents = await fetchEvents(["7"], ["AU", "US", "GB", "FR", "ZA"]);
+const horseEvents = await fetchEvents(["7"], ["AU", "US", "GB", "ZA"]);
 
     if (!horseEvents.length) {
       horseCache = [];
