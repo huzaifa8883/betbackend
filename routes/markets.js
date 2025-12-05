@@ -2002,6 +2002,18 @@ if (evTypeId == 4339) { // Greyhound
 
                     return {
                         marketId: catalogItem.marketId,
+                          countryCode: ( () => {
+        let cc = "uk";
+        const eventName = catalog?.event?.name || catalogItem.event?.name || "";
+        const venue = catalog?.event?.venue || catalogItem.event?.venue || "";
+
+        if (eventName.includes("US") || venue.includes("US")) cc = "us";
+        else if (eventName.includes("AU") || venue.includes("AU")) cc = "au";
+        else if (eventName.includes("IRE") || venue.includes("IRE")) cc = "ie";
+        else if (eventName.includes("GB") || venue.includes("GB") || venue.includes("UK")) cc = "gb";
+
+        return cc;
+    })(),
                         selectionId: runner.selectionId,
                         runnerName: runner.runnerName,
                         handicap: runner.handicap,
