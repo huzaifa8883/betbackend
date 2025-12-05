@@ -90,7 +90,7 @@ async function getOrSetCache(key, ttlSeconds, fetcher) {
 
 router.get('/get-match', async (req, res) => {
     try {
-        const matchId = req.query.matchId || '34204356'; // Default matchId
+        const matchId = req.query.matchId || '1.251244870'; // Default matchId
         const url = `https://gold3patti.biz:4000/cricket/fetchmatch?match=${matchId}`;
 
         // HTTPS agent with SSL verification disabled
