@@ -1689,7 +1689,7 @@ async function fetchMarketBooks(marketIds) {
 // Polling function
 async function updateHorseCache() {
   try {
-    const horseEvents = await fetchEvents(["7"], ["AU", "US", "GB"]);
+    const horseEvents = await fetchEvents(["7"], ["AU", "US", "GB","FR"]);
 
     if (!horseEvents.length) {
       horseCache = [];
