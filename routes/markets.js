@@ -1713,7 +1713,7 @@ async function fetchMarketBooks(marketIds) {
 // Polling function
 async function updateHorseCache() {
   try {
-    const horseEvents = await fetchEvents(["7"], ["AUS", "USA", "GB","FRA","RSA"]);
+const horseEvents = await fetchEvents(["7"], ["AU", "US", "GB", "FR", "ZA"]);
 
     if (!horseEvents.length) {
       horseCache = [];
@@ -2560,7 +2560,7 @@ async function fetchGreyhoundMarketBooks(marketIds) {
 // Polling function
 async function updateGreyhoundCache() {
   try {
-    const events = await fetchGreyhoundEvents(["4339"], ["AUS", "GB"]);
+    const events = await fetchGreyhoundEvents(["4339"], ["AU", "GB"]);
 
     if (!events.length) {
       greyhoundCache = [];
