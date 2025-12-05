@@ -86,6 +86,21 @@ async function getOrSetCache(key, ttlSeconds, fetcher) {
 
     return data;
 }
+router.get('/get-match', async (req, res) => {
+    try {
+        const matchId = req.query.matchId || '34204356'; // Default matchId
+        const url = `https://gold3patti.biz:4000/cricket/fetchmatch?match=${matchId}`;
+
+        const response = await axios.get(url);
+        const data = response.data;
+
+        res.json(data);
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: 'Failed to fetch match data' });
+    }
+});
+
 
 router.get('/popular', async (req, res) => {
   try {
