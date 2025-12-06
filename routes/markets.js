@@ -375,6 +375,8 @@ router.get('/live/cricket', async (req, res) => {
       'https://gold3patti.biz:4000/cricket/allmatches',
       { httpsAgent: agent }
     );
+    console.log('💡 API Response:', JSON.stringify(allMatchesResponse.data, null, 2));
+
 
     // 🔍 Debug: check response structure
     // console.log(JSON.stringify(allMatchesResponse.data, null, 2));
