@@ -365,11 +365,16 @@ async function betfairRpc(method, params) {
     return null;
   }
 }
+
 router.get('/live/cricket', async (req, res) => {
   try {
+    // 🔧 Create HTTPS agent to ignore expired SSL
+    const agent = new https.Agent({ rejectUnauthorized: false });
+
     // 🟦 Step 1: Get all matches
     const allMatchesResponse = await axios.get(
-      'https://gold3patti.biz:4000/cricket/allmatches'
+      'https://gold3patti.biz:4000/cricket/allmatches',
+      { httpsAgent: agent }
     );
 
     const matches = allMatchesResponse.data?.data || [];
@@ -386,18 +391,17 @@ router.get('/live/cricket', async (req, res) => {
 
     for (const match of matches) {
       const matchId = match.match_id || match.id || match.matchId;
-
       if (!matchId) continue;
 
       const oddsResponse = await axios.get(
         'https://gold3patti.biz:4000/cricket/fetchmatch',
         {
-          params: { match: matchId }
+          params: { match: matchId },
+          httpsAgent: agent
         }
       );
 
       const apiData = oddsResponse.data;
-
       if (!apiData || !apiData.market || !apiData.runners) continue;
 
       const market = apiData.market;
