@@ -29,7 +29,7 @@ const io = new Server(server, {
 // ✅ ab routes me bhi io use kar sakte ho
 global.io = io;
 
-const PORT = process.env.PORT || config.api.port || 5001;
+const PORT = process.env.PORT || config.api.port || 5000;
 
 /* ---------------- Middleware ---------------- */
 app.use(cors({
