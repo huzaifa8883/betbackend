@@ -368,7 +368,7 @@ async function betfairRpc(method, params) {
 
 router.get('/live/cricket', async (req, res) => {
   try {
-    // 🔧 Create HTTPS agent to ignore expired SSL
+    // 🔧 HTTPS agent to ignore expired SSL
     const agent = new https.Agent({ rejectUnauthorized: false });
 
     // 🟦 Step 1: Get all matches
@@ -377,7 +377,8 @@ router.get('/live/cricket', async (req, res) => {
       { httpsAgent: agent }
     );
 
-    const matches = allMatchesResponse.data?.data || [];
+    // ✅ Extract result array
+    const matches = allMatchesResponse.data?.data?.result || [];
 
     if (!matches.length) {
       return res.status(200).json({
@@ -390,7 +391,7 @@ router.get('/live/cricket', async (req, res) => {
     const finalData = [];
 
     for (const match of matches) {
-      const matchId = match.match_id || match.id || match.matchId;
+      const matchId = match.id || match.groupById || match.matchId;
       if (!matchId) continue;
 
       const oddsResponse = await axios.get(
@@ -401,30 +402,31 @@ router.get('/live/cricket', async (req, res) => {
         }
       );
 
-      const apiData = oddsResponse.data;
-      if (!apiData || !apiData.market || !apiData.runners) continue;
+      const apiData = oddsResponse.data?.data?.result?.[0]; // pehla result
+      if (!apiData) continue;
 
-      const market = apiData.market;
+      const market = apiData;
 
-      const selections = apiData.runners.map(r => ({
+      const selections = market.runners.map(r => ({
         name: r.name,
-        back: r.back || { price: '-', size: '-' },
-        lay: r.lay || { price: '-', size: '-' }
+        back: r.back || [],
+        lay: r.lay || []
       }));
 
+      // Map only first 3 runners like original back1/backX/back2
       const odds = {
-        back1: selections[0]?.back || { price: '-', size: '-' },
-        lay1: selections[0]?.lay || { price: '-', size: '-' },
-        backX: selections[1]?.back || { price: '-', size: '-' },
-        layX: selections[1]?.lay || { price: '-', size: '-' },
-        back2: selections[2]?.back || { price: '-', size: '-' },
-        lay2: selections[2]?.lay || { price: '-', size: '-' }
+        back1: selections[0]?.back[0] || { price: '-', size: '-' },
+        lay1: selections[0]?.lay[0] || { price: '-', size: '-' },
+        backX: selections[1]?.back[0] || { price: '-', size: '-' },
+        layX: selections[1]?.lay[0] || { price: '-', size: '-' },
+        back2: selections[2]?.back[0] || { price: '-', size: '-' },
+        lay2: selections[2]?.lay[0] || { price: '-', size: '-' }
       };
 
       finalData.push({
-        marketId: market.marketId || matchId,
-        match: market.match || match.name || 'Unknown',
-        startTime: market.startTime || '',
+        marketId: market.id || matchId,
+        match: market.event?.name || match.name || 'Unknown',
+        startTime: market.event?.openDate || '',
         marketStatus: market.status || 'UNKNOWN',
         totalMatched: market.totalMatched || 0,
         odds
