@@ -365,10 +365,9 @@ async function betfairRpc(method, params) {
     return null;
   }
 }
-
 router.get('/live/cricket', async (req, res) => {
   try {
-    // 🔧 HTTPS agent to ignore expired SSL
+    // 🔧 HTTPS agent to bypass expired SSL
     const agent = new https.Agent({ rejectUnauthorized: false });
 
     // 🟦 Step 1: Get all matches
@@ -376,11 +375,12 @@ router.get('/live/cricket', async (req, res) => {
       'https://gold3patti.biz:4000/cricket/allmatches',
       { httpsAgent: agent }
     );
-    console.log(allMatchesResponse)
 
-    // ✅ Extract result array
-    const matches = allMatchesResponse.data?.data?.result || [];
-    console.log(matches)
+    // 🔍 Debug: check response structure
+    // console.log(JSON.stringify(allMatchesResponse.data, null, 2));
+
+    // ✅ Extract matches from response
+    const matches = allMatchesResponse.data?.data?.result || allMatchesResponse.data?.result || [];
 
     if (!matches.length) {
       return res.status(200).json({
@@ -389,55 +389,63 @@ router.get('/live/cricket', async (req, res) => {
       });
     }
 
-    // 🔁 Step 2: Fetch odds for each match
-    const finalData = [];
+    // 🔁 Step 2: Fetch odds for each match in parallel
+    const finalData = await Promise.all(
+      matches.map(async (match) => {
+        const matchId = match.id || match.groupById || match.matchId;
+        if (!matchId) return null;
 
-    for (const match of matches) {
-      const matchId = match.id || match.groupById || match.matchId;
-      if (!matchId) continue;
+        try {
+          const oddsResponse = await axios.get(
+            'https://gold3patti.biz:4000/cricket/fetchmatch',
+            {
+              params: { match: matchId },
+              httpsAgent: agent
+            }
+          );
 
-      const oddsResponse = await axios.get(
-        'https://gold3patti.biz:4000/cricket/fetchmatch',
-        {
-          params: { match: matchId },
-          httpsAgent: agent
+          const apiData = oddsResponse.data?.data?.result?.[0] || oddsResponse.data?.result?.[0];
+          if (!apiData) return null;
+
+          const market = apiData;
+
+          const selections = market.runners.map(r => ({
+            name: r.name,
+            back: r.back || [],
+            lay: r.lay || []
+          }));
+
+          const odds = {
+            back1: selections[0]?.back[0] || { price: '-', size: '-' },
+            lay1: selections[0]?.lay[0] || { price: '-', size: '-' },
+            backX: selections[1]?.back[0] || { price: '-', size: '-' },
+            layX: selections[1]?.lay[0] || { price: '-', size: '-' },
+            back2: selections[2]?.back[0] || { price: '-', size: '-' },
+            lay2: selections[2]?.lay[0] || { price: '-', size: '-' }
+          };
+
+          return {
+            marketId: market.id || matchId,
+            match: market.event?.name || match.name || 'Unknown',
+            startTime: market.event?.openDate || '',
+            marketStatus: market.status || 'UNKNOWN',
+            totalMatched: market.totalMatched || 0,
+            odds
+          };
+
+        } catch (err) {
+          console.error(`❌ Error fetching match ${matchId}:`, err.message);
+          return null;
         }
-      );
+      })
+    );
 
-      const apiData = oddsResponse.data?.data?.result?.[0]; // pehla result
-      if (!apiData) continue;
-
-      const market = apiData;
-
-      const selections = market.runners.map(r => ({
-        name: r.name,
-        back: r.back || [],
-        lay: r.lay || []
-      }));
-
-      // Map only first 3 runners like original back1/backX/back2
-      const odds = {
-        back1: selections[0]?.back[0] || { price: '-', size: '-' },
-        lay1: selections[0]?.lay[0] || { price: '-', size: '-' },
-        backX: selections[1]?.back[0] || { price: '-', size: '-' },
-        layX: selections[1]?.lay[0] || { price: '-', size: '-' },
-        back2: selections[2]?.back[0] || { price: '-', size: '-' },
-        lay2: selections[2]?.lay[0] || { price: '-', size: '-' }
-      };
-
-      finalData.push({
-        marketId: market.id || matchId,
-        match: market.event?.name || match.name || 'Unknown',
-        startTime: market.event?.openDate || '',
-        marketStatus: market.status || 'UNKNOWN',
-        totalMatched: market.totalMatched || 0,
-        odds
-      });
-    }
+    // Filter out nulls (failed matches)
+    const filteredData = finalData.filter(d => d !== null);
 
     res.status(200).json({
       status: 'success',
-      data: finalData
+      data: filteredData
     });
 
   } catch (err) {
@@ -449,7 +457,6 @@ router.get('/live/cricket', async (req, res) => {
     });
   }
 });
-
 
 async function betfairRpc(method, params) {
   const sessionToken = await getSessionToken();
