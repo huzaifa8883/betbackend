@@ -365,90 +365,52 @@ async function betfairRpc(method, params) {
     return null;
   }
 }
+
 router.get('/live/cricket', async (req, res) => {
   try {
-    // 🔧 HTTPS agent to bypass expired SSL
     const agent = new https.Agent({ rejectUnauthorized: false });
 
-    // 🟦 Step 1: Get all matches
+    // Step 1: Fetch all matches
     const allMatchesResponse = await axios.get(
       'https://gold3patti.biz:4000/cricket/allmatches',
       { httpsAgent: agent }
     );
-    console.log('💡 API Response:', JSON.stringify(allMatchesResponse.data, null, 2));
 
-
-    // 🔍 Debug: check response structure
-    // console.log(JSON.stringify(allMatchesResponse.data, null, 2));
-
-    // ✅ Extract matches from response
-    const matches = allMatchesResponse.data?.data?.result || allMatchesResponse.data?.result || [];
+    const matches = allMatchesResponse.data?.data?.result || [];
 
     if (!matches.length) {
-      return res.status(200).json({
-        status: 'success',
-        data: []
-      });
+      return res.status(200).json({ status: 'success', data: [] });
     }
 
-    // 🔁 Step 2: Fetch odds for each match in parallel
-    const finalData = await Promise.all(
-      matches.map(async (match) => {
-        const matchId = match.id || match.groupById || match.matchId;
-        if (!matchId) return null;
+    const finalData = matches.map(match => {
+      const runners = match.runners || [];
 
-        try {
-          const oddsResponse = await axios.get(
-            'https://gold3patti.biz:4000/cricket/fetchmatch',
-            {
-              params: { match: matchId },
-              httpsAgent: agent
-            }
-          );
+      const selections = runners.map(r => ({
+        name: r.name,
+        back: r.back?.[0] || { price: "-", size: "-" },
+        lay: r.lay?.[0] || { price: "-", size: "-" }
+      }));
 
-          const apiData = oddsResponse.data?.data?.result?.[0] || oddsResponse.data?.result?.[0];
-          if (!apiData) return null;
+      const odds = {
+        back1: selections[0]?.back || { price: "-", size: "-" },
+        lay1: selections[0]?.lay || { price: "-", size: "-" },
+        back2: selections[1]?.back || { price: "-", size: "-" },
+        lay2: selections[1]?.lay || { price: "-", size: "-" },
+        back3: selections[2]?.back || { price: "-", size: "-" },
+        lay3: selections[2]?.lay || { price: "-", size: "-" }
+      };
 
-          const market = apiData;
-
-          const selections = market.runners.map(r => ({
-            name: r.name,
-            back: r.back || [],
-            lay: r.lay || []
-          }));
-
-          const odds = {
-            back1: selections[0]?.back[0] || { price: '-', size: '-' },
-            lay1: selections[0]?.lay[0] || { price: '-', size: '-' },
-            backX: selections[1]?.back[0] || { price: '-', size: '-' },
-            layX: selections[1]?.lay[0] || { price: '-', size: '-' },
-            back2: selections[2]?.back[0] || { price: '-', size: '-' },
-            lay2: selections[2]?.lay[0] || { price: '-', size: '-' }
-          };
-
-          return {
-            marketId: market.id || matchId,
-            match: market.event?.name || match.name || 'Unknown',
-            startTime: market.event?.openDate || '',
-            marketStatus: market.status || 'UNKNOWN',
-            totalMatched: market.totalMatched || 0,
-            odds
-          };
-
-        } catch (err) {
-          console.error(`❌ Error fetching match ${matchId}:`, err.message);
-          return null;
-        }
-      })
-    );
-
-    // Filter out nulls (failed matches)
-    const filteredData = finalData.filter(d => d !== null);
-
-    res.status(200).json({
-      status: 'success',
-      data: filteredData
+      return {
+        matchId: match.id,
+        match: match.event?.name || 'Unknown',
+        startTime: match.event?.openDate || '',
+        marketStatus: match.status || 'UNKNOWN',
+        totalMatched: null,
+        odds
+      };
     });
+
+    res.status(200).json({ status: 'success', data: finalData });
 
   } catch (err) {
     console.error('❌ Error:', err.message);
