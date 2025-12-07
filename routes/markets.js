@@ -2136,9 +2136,12 @@ router.get('/catalog2', async (req, res) => {
         return res.status(400).json({ error: "Unsupported eventTypeId" });
     }
 
+    // --- Temporary SSL workaround (ignore certificate errors) ---
+    const agent = new https.Agent({ rejectUnauthorized: false });
+
     // Fetch data from Gold3Patti
     const initialResponse = await getOrSetCache(`catalog_${marketId}`, 60, async () => {
-      return axios.get(endpoint);
+      return axios.get(endpoint, { httpsAgent: agent });
     });
 
     const catalog = initialResponse.data;
@@ -2232,6 +2235,7 @@ router.get('/catalog2', async (req, res) => {
     });
   }
 });
+
 
 router.get('/Data', async (req, res) => {
   const marketId = req.query.id;
