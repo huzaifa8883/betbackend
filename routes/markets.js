@@ -2114,17 +2114,21 @@ router.get('/catalog2', async (req, res) => {
         }
 
         // --- DETERMINE GOLD3PATTI ENDPOINT ---
-        let endpoint;
-        const eventTypeId = req.query.eventTypeId; // assume eventTypeId is passed in query
-        if (!eventTypeId) return res.status(400).json({ error: "eventTypeId is required in query parameters" });
+      let eventTypeId;
+        if (marketId.startsWith('CR')) eventTypeId = 4;       // Cricket
+        else if (marketId.startsWith('TE')) eventTypeId = 2;  // Tennis
+        else if (marketId.startsWith('FO')) eventTypeId = 1;  // Football
+        else if (marketId.startsWith('HO')) eventTypeId = 7;  // Horse
+        else if (marketId.startsWith('GR')) eventTypeId = 4339; // Greyhound
+        else return res.status(400).json({ error: "Cannot determine eventTypeId from marketId" });
 
+        // --- SELECT GOLD3PATTI ENDPOINT ---
+        let endpoint;
         if (eventTypeId == 4) endpoint = `https://gold3patti.biz:4000/cricket/fetchmatch?match=${marketId}`;
         else if (eventTypeId == 2) endpoint = `https://gold3patti.biz:4000/tennis/fetchmatch?match=${marketId}`;
         else if (eventTypeId == 1) endpoint = `https://gold3patti.biz:4000/football/fetchmatch?match=${marketId}`;
         else if (eventTypeId == 7) endpoint = `https://gold3patti.biz:4000/horse/fetchrace?raceNumber=${marketId}`;
         else if (eventTypeId == 4339) endpoint = `https://gold3patti.biz:4000/greyhound/fetchrace?raceNumber=${marketId}`;
-        else return res.status(400).json({ error: "Unsupported eventTypeId" });
-
         // --- FETCH DATA FROM GOLD3PATTI ---
         const initialResponse = await getOrSetCache(`catalog_${marketId}`, 60, async () => {
             return axios.get(endpoint);
