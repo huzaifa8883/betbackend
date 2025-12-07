@@ -366,6 +366,7 @@ async function betfairRpc(method, params) {
   }
 }
 
+
 router.get('/catalog2/single', async (req, res) => {
   try {
     const matchId = '1.251363199'; // default single match id
@@ -377,13 +378,18 @@ router.get('/catalog2/single', async (req, res) => {
       { httpsAgent: agent }
     );
 
-    const match = response.data?.data || response.data || null;
-    if (!match || !match.runners || !match.runners.length) {
+    // Correctly extract the match data
+    const matchData =
+      response.data?.data?.result?.[0] ||
+      response.data?.result?.[0] ||
+      null;
+
+    if (!matchData || !matchData.runners || !matchData.runners.length) {
       return res.status(404).json({ error: 'Market not found or no runners available' });
     }
 
     // Map runners and odds
-    const runners = (match.runners || []).map(runner => ({
+    const runners = matchData.runners.map(runner => ({
       id: runner.id,
       name: runner.name,
       back: runner.back || [],
@@ -400,17 +406,17 @@ router.get('/catalog2/single', async (req, res) => {
       result: [
         {
           id: matchId,
-          name: match.event?.name || 'Match Odds',
+          name: matchData.event?.name || 'Match Odds',
           eventTypeId: '4',
-          event: match.event || {},
-          competition: match.competition || {},
-          start: match.event?.openDate || Date.now(),
-          status: match.status || "OPEN",
-          matched: match.matched || 0,
+          event: matchData.event || {},
+          competition: matchData.competition || {},
+          start: matchData.event?.openDate || Date.now(),
+          status: matchData.status || "OPEN",
+          matched: matchData.matched || 0,
           runners,
           numRunners: runners.length,
           numActiveRunners: runners.length,
-          inPlay: match.inPlay || false,
+          inPlay: matchData.inPlay || false,
           isBettable: true
         }
       ]
