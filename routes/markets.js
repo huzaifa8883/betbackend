@@ -1831,18 +1831,8 @@ const sportMap = {
   6: { name: "Baseball", image: "baseball.svg" },
   7: { name: "Golf", image: "golf.svg" },
   4339: { name: "Horse Racing", image: "horse.svg" },
-  // Apne hisaab se aur bhi add kar sakte hain
-};
-// NOTE: Assuming 'axios', 'getSessionToken', and 'APP_KEY' are defined globally or imported.
-// ==============================================================================
-// IN-MEMORY STATE FOR THROTTLING, SMOOTHING, AND STATUS HOLD (Persists per marketId across requests)
-// Since we cannot modify external modules, these maps and functions must live here.
-// NOTE: This state is global to the Node.js process and shared across all concurrent /catalog2 requests.
-// For a production system, this should be in a dedicated Redis/Memcached store or a robust in-memory
-// solution that is part of a singleton service. For this requirement, it is placed in the module scope.
-// ==============================================================================
+ 
 
-// EMA smoothing state: Stores the last *reported* smoothed price for each runner (marketId -> selectionId -> {price: number, size: number})
 const smoothingState = new Map(); 
 
 // Status Hold state: Stores the last *raw* status and the time it was first observed (marketId -> {status: string, lastChangeTime: number, confirmedStatus: string})
