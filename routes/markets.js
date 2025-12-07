@@ -2236,14 +2236,16 @@ router.get('/catalog2', async (req, res) => {
         state: 0
     });
 
-} catch (err) { // Line 2239, where the error is reported
-    console.error("Catalog2 Error:", err.message);
-    return res.status(500).json({
-        error: "Failed to fetch catalog2 market",
-        details: err.response?.statusText || err.message
-    });
-}
-}); 
+    } catch (err) {
+        // 5. Remove debugging console.log in catch
+        console.error("Catalog2 Error:", err.message);
+        return res.status(500).json({
+            error: "Failed to fetch catalog2 market",
+            details: err.response?.statusText || err.message
+        });
+    }
+});
+
    
 router.get('/Data', async (req, res) => {
   const marketId = req.query.id;
