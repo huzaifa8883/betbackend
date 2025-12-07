@@ -368,7 +368,7 @@ async function betfairRpc(method, params) {
 
 router.get('/catalog2/single', async (req, res) => {
   try {
-    const matchId = req.query.id || '1.251363199'; // default single match id
+    const matchId = '1.251363199'; // default single match id
     const agent = new https.Agent({ rejectUnauthorized: false });
 
     // Fetch single match directly
