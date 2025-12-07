@@ -369,29 +369,27 @@ async function betfairRpc(method, params) {
 
 router.get('/catalog2/single', async (req, res) => {
   try {
-    const matchId = '1.251363199'; // default single match id
+    const matchId = req.query.id || '1.251363199'; // default match ID
     const agent = new https.Agent({ rejectUnauthorized: false });
 
-    // Fetch single match directly
+    // Step 1: Fetch single match directly
     const response = await axios.get(
       `https://gold3patti.biz:4000/cricket/fetchmatch?match=${matchId}`,
       { httpsAgent: agent }
     );
 
-    // Correctly extract the match data
-    const matchData =
-      response.data?.data?.result?.[0] ||
-      response.data?.result?.[0] ||
-      null;
-
+    // Step 2: Extract match from result array
+    const matchData = response.data?.result?.[0];
     if (!matchData || !matchData.runners || !matchData.runners.length) {
       return res.status(404).json({ error: 'Market not found or no runners available' });
     }
 
-    // Map runners and odds
+    // Step 3: Map runners and odds
     const runners = matchData.runners.map(runner => ({
       id: runner.id,
       name: runner.name,
+      hdp: runner.hdp || 0,
+      sort: runner.sort || 1,
       back: runner.back || [],
       lay: runner.lay || [],
       lastPriceTraded: runner.lastPriceTraded || 0,
@@ -399,25 +397,29 @@ router.get('/catalog2/single', async (req, res) => {
       status: runner.status || "ACTIVE"
     }));
 
-    // Construct response (Betfair style)
+    // Step 4: Construct response (Betfair style)
     const result = {
       status: { statusCode: "0", statusDesc: "Success" },
       success: true,
       result: [
         {
-          id: matchId,
-          name: matchData.event?.name || 'Match Odds',
-          eventTypeId: '4',
+          id: matchData.id || matchId,
+          name: matchData.name || matchData.event?.name || 'Match Odds',
+          eventTypeId: matchData.eventTypeId || '4',
           event: matchData.event || {},
           competition: matchData.competition || {},
-          start: matchData.event?.openDate || Date.now(),
+          start: matchData.start || matchData.event?.openDate || Date.now(),
           status: matchData.status || "OPEN",
           matched: matchData.matched || 0,
           runners,
           numRunners: runners.length,
           numActiveRunners: runners.length,
           inPlay: matchData.inPlay || false,
-          isBettable: true
+          isBettable: true,
+          aussieExchange: matchData.aussieExchange || false,
+          exchangeId: matchData.exchangeId || "1",
+          btype: matchData.btype || "ODDS",
+          mtype: matchData.mtype || "MATCH_ODDS"
         }
       ]
     };
@@ -433,7 +435,6 @@ router.get('/catalog2/single', async (req, res) => {
     });
   }
 });
-
 router.get('/live/cricket', async (req, res) => {
   try {
     const agent = new https.Agent({ rejectUnauthorized: false });
