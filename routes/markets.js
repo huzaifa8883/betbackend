@@ -366,6 +366,68 @@ async function betfairRpc(method, params) {
   }
 }
 
+router.get('/catalog2/single', async (req, res) => {
+  try {
+    const matchId = req.query.id || '1.251363199'; // default single match id
+    const agent = new https.Agent({ rejectUnauthorized: false });
+
+    // Fetch single match directly
+    const response = await axios.get(
+      `https://gold3patti.biz:4000/cricket/fetchmatch?match=${matchId}`,
+      { httpsAgent: agent }
+    );
+
+    const match = response.data?.data || response.data || null;
+    if (!match || !match.runners || !match.runners.length) {
+      return res.status(404).json({ error: 'Market not found or no runners available' });
+    }
+
+    // Map runners and odds
+    const runners = (match.runners || []).map(runner => ({
+      id: runner.id,
+      name: runner.name,
+      back: runner.back || [],
+      lay: runner.lay || [],
+      lastPriceTraded: runner.lastPriceTraded || 0,
+      totalMatched: runner.totalMatched || 0,
+      status: runner.status || "ACTIVE"
+    }));
+
+    // Construct response (Betfair style)
+    const result = {
+      status: { statusCode: "0", statusDesc: "Success" },
+      success: true,
+      result: [
+        {
+          id: matchId,
+          name: match.event?.name || 'Match Odds',
+          eventTypeId: '4',
+          event: match.event || {},
+          competition: match.competition || {},
+          start: match.event?.openDate || Date.now(),
+          status: match.status || "OPEN",
+          matched: match.matched || 0,
+          runners,
+          numRunners: runners.length,
+          numActiveRunners: runners.length,
+          inPlay: match.inPlay || false,
+          isBettable: true
+        }
+      ]
+    };
+
+    return res.json(result);
+
+  } catch (err) {
+    console.error("❌ Catalog2 Single Match Error:", err.message);
+    return res.status(500).json({
+      status: 'error',
+      message: 'Failed to fetch single match',
+      error: err.message
+    });
+  }
+});
+
 router.get('/live/cricket', async (req, res) => {
   try {
     const agent = new https.Agent({ rejectUnauthorized: false });
