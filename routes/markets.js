@@ -2106,126 +2106,99 @@ const sportMap = {
 //         });
 //     }
 // });
+
 router.get('/catalog2', async (req, res) => {
   try {
     const marketId = req.query.id;
-    const eventTypeId = req.query.eventTypeId; // frontend se le rahe hain
+    const eventTypeId = req.query.eventTypeId;
 
     if (!marketId) return res.status(400).json({ error: "marketId is required" });
     if (!eventTypeId) return res.status(400).json({ error: "eventTypeId is required" });
 
-    // Determine Gold3Patti endpoint
+    // Determine endpoint based on eventTypeId
     let endpoint;
     switch (parseInt(eventTypeId)) {
-      case 4:
-        endpoint = `https://gold3patti.biz:4000/cricket/fetchmatch?match=${marketId}`;
-        break;
-      case 2:
-        endpoint = `https://gold3patti.biz:4000/tennis/fetchmatch?match=${marketId}`;
-        break;
-      case 1:
-        endpoint = `https://gold3patti.biz:4000/football/fetchmatch?match=${marketId}`;
-        break;
-      case 7:
-        endpoint = `https://gold3patti.biz:4000/horse/fetchrace?raceNumber=${marketId}`;
-        break;
-      case 4339:
-        endpoint = `https://gold3patti.biz:4000/greyhound/fetchrace?raceNumber=${marketId}`;
-        break;
-      default:
-        return res.status(400).json({ error: "Unsupported eventTypeId" });
+      case 4: endpoint = `https://gold3patti.biz:4000/cricket/fetchmatch?match=${marketId}`; break;
+      case 2: endpoint = `https://gold3patti.biz:4000/tennis/fetchmatch?match=${marketId}`; break;
+      case 1: endpoint = `https://gold3patti.biz:4000/football/fetchmatch?match=${marketId}`; break;
+      case 7: endpoint = `https://gold3patti.biz:4000/horse/fetchrace?raceNumber=${marketId}`; break;
+      case 4339: endpoint = `https://gold3patti.biz:4000/greyhound/fetchrace?raceNumber=${marketId}`; break;
+      default: return res.status(400).json({ error: "Unsupported eventTypeId" });
     }
 
-    // --- Temporary SSL workaround (ignore certificate errors) ---
+    // Ignore SSL certificate errors temporarily
     const agent = new https.Agent({ rejectUnauthorized: false });
+    const response = await axios.get(endpoint, { httpsAgent: agent });
+    const catalog = response.data;
 
-    // Fetch data from Gold3Patti
-    const initialResponse = await getOrSetCache(`catalog_${marketId}`, 60, async () => {
-      return axios.get(endpoint, { httpsAgent: agent });
-    });
-
-    const catalog = initialResponse.data;
     if (!catalog) return res.status(404).json({ error: "Market not found" });
 
-    // Country code calculation
-    const eventName = catalog.eventName || "";
-    const venue = catalog.venue || "";
-    let countryCode = "uk";
-    if (eventName.includes("US") || venue.includes("US")) countryCode = "us";
-    else if (eventName.includes("AU") || venue.includes("AU")) countryCode = "au";
-    else if (eventName.includes("IRE") || venue.includes("IRE")) countryCode = "ie";
-    else if (eventName.includes("GB") || venue.includes("GB") || venue.includes("UK")) countryCode = "gb";
+    // Map runners and odds
+    const runners = (catalog.runners || []).map(runner => ({
+      id: runner.id || runner.selectionId,
+      name: runner.name,
+      hdp: runner.hdp || 0,
+      sort: runner.sort || 1,
+      back: runner.back || [],
+      lay: runner.lay || [],
+      lastPriceTraded: runner.lastPriceTraded || 0,
+      totalMatched: runner.totalMatched || 0,
+      status: runner.status || "ACTIVE"
+    }));
 
-    // Sport maps
-    const SPORT_MAP_BY_ID = {
-      4: "Cricket", 2: "Tennis", 1: "Football",
-      7: "Horse Racing", 4339: "Greyhound"
-    };
-    const SPORT_ICON_MAP = {
-      Cricket: "cricket.svg", Tennis: "tennis.svg", Football: "soccer.svg",
-      "Horse Racing": "horse.svg", Greyhound: "greyhound-racing.svg", Unknown: "default.svg"
-    };
-    const sportName = SPORT_MAP_BY_ID[eventTypeId] || "Unknown";
-    const sportIcon = SPORT_ICON_MAP[sportName] || "default.svg";
-
-    // Map runners
-    const mapRunners = (runners) => {
-      return (runners || []).map(runner => {
-        let silkColor = null;
-        let clothNumber = null;
-        if (eventTypeId == 7 || eventTypeId == 4339) {
-          clothNumber = (eventTypeId == 7) ? (runner.clothNumber || null) : (runner.trap || runner.name?.match(/\d+/)?.[0] || null);
-          silkColor = clothNumber ? `https://bp-silks.lhre.net/saddle/${countryCode}/${clothNumber}.svg` : `https://bp-silks.lhre.net/saddle/${countryCode}/default.svg`;
+    // Prepare final API response similar to Betfair style
+    const result = {
+      status: {
+        statusCode: "0",
+        statusDesc: "Success"
+      },
+      success: true,
+      result: [
+        {
+          id: marketId,
+          groupById: catalog.eventId || null,
+          op: "BetPro",
+          name: catalog.marketName || catalog.name || "Match Odds",
+          aussieExchange: false,
+          exchangeId: "1",
+          start: catalog.marketStartTime || Date.now(),
+          btype: "ODDS",
+          mtype: "MATCH_ODDS",
+          event: {
+            id: catalog.eventId || null,
+            name: catalog.eventName || "",
+            openDate: catalog.marketStartTime || new Date().toISOString(),
+            venue: catalog.venue || null,
+            countryCode: catalog.countryCode || "GB",
+            countryCodeISO2: catalog.countryCode || "GB",
+            altName: catalog.eventName || ""
+          },
+          eventTypeId: eventTypeId,
+          inPlay: catalog.inPlay || false,
+          competition: {
+            id: catalog.competitionId || null,
+            name: catalog.competitionName || ""
+          },
+          matched: catalog.totalMatched || 0,
+          numWinners: 1,
+          numRunners: runners.length,
+          numActiveRunners: runners.length,
+          status: catalog.status || "OPEN",
+          runners,
+          maxLiabilityPerBet: null,
+          maxLiabilityPerMarket: null,
+          betDelay: 0,
+          hidden: false,
+          isBettable: true,
+          bettableTime: Date.now(),
+          tabGroupId: 0,
+          tabGroupIndex: 0,
+          isStreamAvailable: false
         }
-        return {
-          selectionId: runner.selectionId,
-          runnerName: runner.name,
-          handicap: runner.handicap || null,
-          status: runner.status || "ACTIVE",
-          silkColor,
-          clothNumber,
-          jockeyName: runner.jockeyName || null,
-          trainerName: runner.trainerName || null,
-          coloursDescription: runner.coloursDescription || null,
-          coloursImage: silkColor,
-          price1: runner.price1 || 0, size1: runner.size1 || 0,
-          price2: runner.price2 || 0, size2: runner.size2 || 0,
-          price3: runner.price3 || 0, size3: runner.size3 || 0,
-          lay1: runner.lay1 || 0, ls1: runner.ls1 || 0,
-          lay2: runner.lay2 || 0, ls2: runner.ls2 || 0,
-          lay3: runner.lay3 || 0, ls3: runner.ls3 || 0
-        };
-      });
+      ]
     };
 
-    const runners = mapRunners(catalog.runners);
-
-    // Send response
-    return res.json({
-      marketId,
-      marketName: catalog.marketName || catalog.name || "",
-      marketStartTimeUtc: catalog.marketStartTime || catalog.startTime || null,
-      status: catalog.status || "ACTIVE",
-      runners,
-      eventTypeId,
-      eventType: sportName,
-      eventId: catalog.eventId || null,
-      eventName: catalog.eventName || "",
-      competitionId: catalog.competitionId || null,
-      competitionName: catalog.competitionName || "",
-      sport: { name: sportName, image: sportIcon, active: true },
-      BookmakerMarkets: catalog.BookmakerMarkets || [],
-      TossMarkets: catalog.TossMarkets || [],
-      FancyMarkets: catalog.FancyMarkets || [],
-      Fancy2Markets: catalog.Fancy2Markets || [],
-      FigureMarkets: catalog.FigureMarkets || [],
-      OddFigureMarkets: catalog.OddFigureMarkets || [],
-      OtherMarkets: catalog.OtherMarkets || [],
-      OtherRaceMarkets: catalog.OtherRaceMarkets || [],
-      subMarkets: catalog.subMarkets || [],
-      updatedAt: new Date().toISOString(),
-      state: 0
-    });
+    return res.json(result);
 
   } catch (err) {
     console.error("Catalog2 Error:", err.message);
