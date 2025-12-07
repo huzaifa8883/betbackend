@@ -2107,146 +2107,130 @@ const sportMap = {
 //     }
 // });
 router.get('/catalog2', async (req, res) => {
-    try {
-        const marketId = req.query.id;
-        if (!marketId) {
-            return res.status(400).json({ error: "marketId is required in query parameters" });
-        }
+  try {
+    const marketId = req.query.id;
+    const eventTypeId = req.query.eventTypeId; // frontend se le rahe hain
 
-        // --- DETERMINE GOLD3PATTI ENDPOINT ---
-      let eventTypeId;
-        if (marketId.startsWith('CR')) eventTypeId = 4;       // Cricket
-        else if (marketId.startsWith('TE')) eventTypeId = 2;  // Tennis
-        else if (marketId.startsWith('FO')) eventTypeId = 1;  // Football
-        else if (marketId.startsWith('HO')) eventTypeId = 7;  // Horse
-        else if (marketId.startsWith('GR')) eventTypeId = 4339; // Greyhound
-        else return res.status(400).json({ error: "Cannot determine eventTypeId from marketId" });
+    if (!marketId) return res.status(400).json({ error: "marketId is required" });
+    if (!eventTypeId) return res.status(400).json({ error: "eventTypeId is required" });
 
-        // --- SELECT GOLD3PATTI ENDPOINT ---
-        let endpoint;
-        if (eventTypeId == 4) endpoint = `https://gold3patti.biz:4000/cricket/fetchmatch?match=${marketId}`;
-        else if (eventTypeId == 2) endpoint = `https://gold3patti.biz:4000/tennis/fetchmatch?match=${marketId}`;
-        else if (eventTypeId == 1) endpoint = `https://gold3patti.biz:4000/football/fetchmatch?match=${marketId}`;
-        else if (eventTypeId == 7) endpoint = `https://gold3patti.biz:4000/horse/fetchrace?raceNumber=${marketId}`;
-        else if (eventTypeId == 4339) endpoint = `https://gold3patti.biz:4000/greyhound/fetchrace?raceNumber=${marketId}`;
-        // --- FETCH DATA FROM GOLD3PATTI ---
-        const initialResponse = await getOrSetCache(`catalog_${marketId}`, 60, async () => {
-            return axios.get(endpoint);
-        });
-
-        const catalog = initialResponse.data;
-        if (!catalog) return res.status(404).json({ error: "Market not found" });
-
-        // --- PRE-CALCULATIONS ---
-        const eventName = catalog.eventName || "";
-        const venue = catalog.venue || "";
-
-        const getCountryCode = () => {
-            let cc = "uk";
-            if (eventName.includes("US") || venue.includes("US")) cc = "us";
-            else if (eventName.includes("AU") || venue.includes("AU")) cc = "au";
-            else if (eventName.includes("IRE") || venue.includes("IRE")) cc = "ie";
-            else if (eventName.includes("GB") || venue.includes("GB") || venue.includes("UK")) cc = "gb";
-            return cc;
-        };
-        const countryCode = getCountryCode();
-
-        const SPORT_MAP_BY_ID = {
-            4: "Cricket", 2: "Tennis", 1: "Football",
-            7: "Horse Racing", 4339: "Greyhound"
-        };
-        const sportName = SPORT_MAP_BY_ID[eventTypeId] || "Unknown";
-
-        const SPORT_ICON_MAP = {
-            Cricket: "cricket.svg", Tennis: "tennis.svg", Football: "soccer.svg",
-            "Horse Racing": "horse.svg", Greyhound: "greyhound-racing.svg", Unknown: "default.svg"
-        };
-        const sportIcon = SPORT_ICON_MAP[sportName] || "default.svg";
-
-        // --- MAP RUNNERS ---
-        const mapRunners = (runners) => {
-            return (runners || []).map(runner => {
-                let silkColor = null;
-                let clothNumber = null;
-                let trapColor = null;
-                let jockeyName = runner.jockeyName || null;
-                let trainerName = runner.trainerName || null;
-                let coloursDescription = runner.coloursDescription || null;
-                let coloursImage = null;
-
-                if (eventTypeId == 7 || eventTypeId == 4339) {
-                    clothNumber = (eventTypeId == 7) ? (runner.clothNumber || null) : (runner.trap || runner.name?.match(/\d+/)?.[0] || null);
-                    silkColor = clothNumber ? `https://bp-silks.lhre.net/saddle/${countryCode}/${clothNumber}.svg` : `https://bp-silks.lhre.net/saddle/${countryCode}/default.svg`;
-                    coloursImage = silkColor;
-                }
-
-                return {
-                    selectionId: runner.selectionId,
-                    runnerName: runner.name,
-                    handicap: runner.handicap || null,
-                    status: runner.status || "ACTIVE",
-
-                    silkColor,
-                    clothNumber,
-                    trapColor,
-                    jockeyName,
-                    trainerName,
-                    coloursDescription,
-                    coloursImage,
-
-                    // Prices (if available)
-                    price1: runner.price1 || 0, size1: runner.size1 || 0,
-                    price2: runner.price2 || 0, size2: runner.size2 || 0,
-                    price3: runner.price3 || 0, size3: runner.size3 || 0,
-
-                    lay1: runner.lay1 || 0, ls1: runner.ls1 || 0,
-                    lay2: runner.lay2 || 0, ls2: runner.ls2 || 0,
-                    lay3: runner.lay3 || 0, ls3: runner.ls3 || 0
-                };
-            });
-        };
-
-        const runners = mapRunners(catalog.runners);
-
-        // --- FINAL RESPONSE ---
-        return res.json({
-            marketId: marketId,
-            marketName: catalog.marketName || catalog.name || "",
-            marketStartTimeUtc: catalog.marketStartTime || catalog.startTime || null,
-            status: catalog.status || "ACTIVE",
-            runners,
-
-            eventTypeId,
-            eventType: sportName,
-
-            eventId: catalog.eventId || null,
-            eventName: catalog.eventName || "",
-            competitionId: catalog.competitionId || null,
-            competitionName: catalog.competitionName || "",
-
-            sport: { name: sportName, image: sportIcon, active: true },
-
-            BookmakerMarkets: catalog.BookmakerMarkets || [],
-            TossMarkets: catalog.TossMarkets || [],
-            FancyMarkets: catalog.FancyMarkets || [],
-            Fancy2Markets: catalog.Fancy2Markets || [],
-            FigureMarkets: catalog.FigureMarkets || [],
-            OddFigureMarkets: catalog.OddFigureMarkets || [],
-            OtherMarkets: catalog.OtherMarkets || [],
-            OtherRaceMarkets: catalog.OtherRaceMarkets || [],
-
-            subMarkets: catalog.subMarkets || [],
-            updatedAt: new Date().toISOString(),
-            state: 0
-        });
-
-    } catch (err) {
-        console.error("Catalog2 Error:", err.message);
-        return res.status(500).json({
-            error: "Failed to fetch catalog2 market",
-            details: err.response?.statusText || err.message
-        });
+    // Determine Gold3Patti endpoint
+    let endpoint;
+    switch (parseInt(eventTypeId)) {
+      case 4:
+        endpoint = `https://gold3patti.biz:4000/cricket/fetchmatch?match=${marketId}`;
+        break;
+      case 2:
+        endpoint = `https://gold3patti.biz:4000/tennis/fetchmatch?match=${marketId}`;
+        break;
+      case 1:
+        endpoint = `https://gold3patti.biz:4000/football/fetchmatch?match=${marketId}`;
+        break;
+      case 7:
+        endpoint = `https://gold3patti.biz:4000/horse/fetchrace?raceNumber=${marketId}`;
+        break;
+      case 4339:
+        endpoint = `https://gold3patti.biz:4000/greyhound/fetchrace?raceNumber=${marketId}`;
+        break;
+      default:
+        return res.status(400).json({ error: "Unsupported eventTypeId" });
     }
+
+    // Fetch data from Gold3Patti
+    const initialResponse = await getOrSetCache(`catalog_${marketId}`, 60, async () => {
+      return axios.get(endpoint);
+    });
+
+    const catalog = initialResponse.data;
+    if (!catalog) return res.status(404).json({ error: "Market not found" });
+
+    // Country code calculation
+    const eventName = catalog.eventName || "";
+    const venue = catalog.venue || "";
+    let countryCode = "uk";
+    if (eventName.includes("US") || venue.includes("US")) countryCode = "us";
+    else if (eventName.includes("AU") || venue.includes("AU")) countryCode = "au";
+    else if (eventName.includes("IRE") || venue.includes("IRE")) countryCode = "ie";
+    else if (eventName.includes("GB") || venue.includes("GB") || venue.includes("UK")) countryCode = "gb";
+
+    // Sport maps
+    const SPORT_MAP_BY_ID = {
+      4: "Cricket", 2: "Tennis", 1: "Football",
+      7: "Horse Racing", 4339: "Greyhound"
+    };
+    const SPORT_ICON_MAP = {
+      Cricket: "cricket.svg", Tennis: "tennis.svg", Football: "soccer.svg",
+      "Horse Racing": "horse.svg", Greyhound: "greyhound-racing.svg", Unknown: "default.svg"
+    };
+    const sportName = SPORT_MAP_BY_ID[eventTypeId] || "Unknown";
+    const sportIcon = SPORT_ICON_MAP[sportName] || "default.svg";
+
+    // Map runners
+    const mapRunners = (runners) => {
+      return (runners || []).map(runner => {
+        let silkColor = null;
+        let clothNumber = null;
+        if (eventTypeId == 7 || eventTypeId == 4339) {
+          clothNumber = (eventTypeId == 7) ? (runner.clothNumber || null) : (runner.trap || runner.name?.match(/\d+/)?.[0] || null);
+          silkColor = clothNumber ? `https://bp-silks.lhre.net/saddle/${countryCode}/${clothNumber}.svg` : `https://bp-silks.lhre.net/saddle/${countryCode}/default.svg`;
+        }
+        return {
+          selectionId: runner.selectionId,
+          runnerName: runner.name,
+          handicap: runner.handicap || null,
+          status: runner.status || "ACTIVE",
+          silkColor,
+          clothNumber,
+          jockeyName: runner.jockeyName || null,
+          trainerName: runner.trainerName || null,
+          coloursDescription: runner.coloursDescription || null,
+          coloursImage: silkColor,
+          price1: runner.price1 || 0, size1: runner.size1 || 0,
+          price2: runner.price2 || 0, size2: runner.size2 || 0,
+          price3: runner.price3 || 0, size3: runner.size3 || 0,
+          lay1: runner.lay1 || 0, ls1: runner.ls1 || 0,
+          lay2: runner.lay2 || 0, ls2: runner.ls2 || 0,
+          lay3: runner.lay3 || 0, ls3: runner.ls3 || 0
+        };
+      });
+    };
+
+    const runners = mapRunners(catalog.runners);
+
+    // Send response
+    return res.json({
+      marketId,
+      marketName: catalog.marketName || catalog.name || "",
+      marketStartTimeUtc: catalog.marketStartTime || catalog.startTime || null,
+      status: catalog.status || "ACTIVE",
+      runners,
+      eventTypeId,
+      eventType: sportName,
+      eventId: catalog.eventId || null,
+      eventName: catalog.eventName || "",
+      competitionId: catalog.competitionId || null,
+      competitionName: catalog.competitionName || "",
+      sport: { name: sportName, image: sportIcon, active: true },
+      BookmakerMarkets: catalog.BookmakerMarkets || [],
+      TossMarkets: catalog.TossMarkets || [],
+      FancyMarkets: catalog.FancyMarkets || [],
+      Fancy2Markets: catalog.Fancy2Markets || [],
+      FigureMarkets: catalog.FigureMarkets || [],
+      OddFigureMarkets: catalog.OddFigureMarkets || [],
+      OtherMarkets: catalog.OtherMarkets || [],
+      OtherRaceMarkets: catalog.OtherRaceMarkets || [],
+      subMarkets: catalog.subMarkets || [],
+      updatedAt: new Date().toISOString(),
+      state: 0
+    });
+
+  } catch (err) {
+    console.error("Catalog2 Error:", err.message);
+    return res.status(500).json({
+      error: "Failed to fetch catalog2 market",
+      details: err.response?.statusText || err.message
+    });
+  }
 });
 
 router.get('/Data', async (req, res) => {
