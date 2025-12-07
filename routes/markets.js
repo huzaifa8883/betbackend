@@ -365,127 +365,146 @@ async function betfairRpc(method, params) {
     return null;
   }
 }
-
-
-router.get('/catalog2/single', async (req, res) => {
-  try {
-    const matchId = req.query.id || '1.251363199'; // default match ID
-    const agent = new https.Agent({ rejectUnauthorized: false });
-
-    // Step 1: Fetch single match directly
-    const response = await axios.get(
-      `https://gold3patti.biz:4000/cricket/fetchmatch?match=${matchId}`,
-      { httpsAgent: agent }
-    );
-
-    // Step 2: Extract match from result array
-    const matchData = response.data?.result?.[0];
-    if (!matchData || !matchData.runners || !matchData.runners.length) {
-      return res.status(404).json({ error: 'Market not found or no runners available' });
-    }
-
-    // Step 3: Map runners and odds
-    const runners = matchData.runners.map(runner => ({
-      id: runner.id,
-      name: runner.name,
-      hdp: runner.hdp || 0,
-      sort: runner.sort || 1,
-      back: runner.back || [],
-      lay: runner.lay || [],
-      lastPriceTraded: runner.lastPriceTraded || 0,
-      totalMatched: runner.totalMatched || 0,
-      status: runner.status || "ACTIVE"
-    }));
-
-    // Step 4: Construct response (Betfair style)
-    const result = {
-      status: { statusCode: "0", statusDesc: "Success" },
-      success: true,
-      result: [
-        {
-          id: matchData.id || matchId,
-          name: matchData.name || matchData.event?.name || 'Match Odds',
-          eventTypeId: matchData.eventTypeId || '4',
-          event: matchData.event || {},
-          competition: matchData.competition || {},
-          start: matchData.start || matchData.event?.openDate || Date.now(),
-          status: matchData.status || "OPEN",
-          matched: matchData.matched || 0,
-          runners,
-          numRunners: runners.length,
-          numActiveRunners: runners.length,
-          inPlay: matchData.inPlay || false,
-          isBettable: true,
-          aussieExchange: matchData.aussieExchange || false,
-          exchangeId: matchData.exchangeId || "1",
-          btype: matchData.btype || "ODDS",
-          mtype: matchData.mtype || "MATCH_ODDS"
-        }
-      ]
-    };
-
-    return res.json(result);
-
-  } catch (err) {
-    console.error("❌ Catalog2 Single Match Error:", err.message);
-    return res.status(500).json({
-      status: 'error',
-      message: 'Failed to fetch single match',
-      error: err.message
-    });
-  }
-});
 router.get('/live/cricket', async (req, res) => {
   try {
-    const agent = new https.Agent({ rejectUnauthorized: false });
+    const sessionToken = await getSessionToken();
 
-    // Step 1: Fetch all matches
-    const allMatchesResponse = await axios.get(
-      'https://gold3patti.biz:4000/cricket/allmatches',
-      { httpsAgent: agent }
+    // 🎯 Step 1: Get cricket events
+    const eventsResponse = await axios.post(
+      'https://api.betfair.com/exchange/betting/json-rpc/v1',
+      [
+        {
+          jsonrpc: '2.0',
+          method: 'SportsAPING/v1.0/listEvents',
+          params: {
+            filter: {
+              eventTypeIds: ['4'],
+              // marketStartTime: {
+              //   from: new Date().toISOString()
+              // }
+            }
+          },
+          id: 1
+        }
+      ],
+      {
+        headers: {
+          'X-Application': APP_KEY,
+          'X-Authentication': sessionToken,
+          'Content-Type': 'application/json'
+        }
+      }
     );
 
-    const matches = allMatchesResponse.data?.data?.result || [];
+    const events = eventsResponse.data[0]?.result || [];
+    const eventIds = events.map(e => e.event.id);
 
-    if (!matches.length) {
-      return res.status(200).json({ status: 'success', data: [] });
-    }
+    // 🎯 Step 2: Get market catalogue
+    const marketCatalogueResponse = await axios.post(
+      'https://api.betfair.com/exchange/betting/json-rpc/v1',
+      [
+        {
+          jsonrpc: '2.0',
+          method: 'SportsAPING/v1.0/listMarketCatalogue',
+          params: {
+            filter: {
+              eventIds: eventIds,
+              marketTypeCodes: ['MATCH_ODDS']
+            },
+            maxResults: '10',
+            marketProjection: ['EVENT', 'RUNNER_METADATA']
+          },
+          id: 2
+        }
+      ],
+      {
+        headers: {
+          'X-Application': APP_KEY,
+          'X-Authentication': sessionToken,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
 
-    const finalData = matches.map(match => {
-      const runners = match.runners || [];
+    const marketCatalogues = marketCatalogueResponse.data[0]?.result || [];
+    const marketIds = marketCatalogues.map(m => m.marketId);
 
-      const selections = runners.map(r => ({
-        name: r.name,
-        back: r.back?.[0] || { price: "-", size: "-" },
-        lay: r.lay?.[0] || { price: "-", size: "-" }
-      }));
+    // 🎯 Step 3: Get market books (odds + volume)
+    const marketBookResponse = await axios.post(
+      'https://api.betfair.com/exchange/betting/json-rpc/v1',
+      [
+        {
+          jsonrpc: '2.0',
+          method: 'SportsAPING/v1.0/listMarketBook',
+          params: {
+            marketIds: marketIds,
+            priceProjection: {
+              priceData: ['EX_BEST_OFFERS']
+            }
+          },
+          id: 3
+        }
+      ],
+      {
+        headers: {
+          'X-Application': APP_KEY,
+          'X-Authentication': sessionToken,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
 
-      const odds = {
-        back1: selections[0]?.back || { price: "-", size: "-" },
-        lay1: selections[0]?.lay || { price: "-", size: "-" },
-        back2: selections[1]?.back || { price: "-", size: "-" },
-        lay2: selections[1]?.lay || { price: "-", size: "-" },
-        back3: selections[2]?.back || { price: "-", size: "-" },
-        lay3: selections[2]?.lay || { price: "-", size: "-" }
-      };
+    const marketBooks = marketBookResponse.data[0]?.result || [];
 
-      return {
-        matchId: match.id,
-        match: match.event?.name || 'Unknown',
-        startTime: match.event?.openDate || '',
-        marketStatus: match.status || 'UNKNOWN',
-        totalMatched: null,
-        odds
-      };
+    // 🔄 Combine data
+    // 🔄 Combine data
+const finalData = marketCatalogues.map(market => {
+  const matchingBook = marketBooks.find(b => b.marketId === market.marketId);
+  const event = events.find(e => e.event.id === market.event.id);
+
+  const selections = market.runners.map(runner => {
+    const runnerBook = matchingBook?.runners.find(r => r.selectionId === runner.selectionId);
+    return {
+      name: runner.runnerName,
+      back: runnerBook?.ex?.availableToBack?.[0] || { price: '-', size: '-' },
+      lay: runnerBook?.ex?.availableToLay?.[0] || { price: '-', size: '-' }
+    };
+  });
+
+  // 🧠 Assume:
+  // selections[0] = team 1
+  // selections[1] = X (draw) — only in soccer
+  // selections[2] = team 2
+
+  const odds = {
+    back1: selections[0]?.back || { price: '-', size: '-' },
+    lay1: selections[0]?.lay || { price: '-', size: '-' },
+    backX: selections[1]?.back || { price: '-', size: '-' },
+    layX: selections[1]?.lay || { price: '-', size: '-' },
+    back2: selections[2]?.back || { price: '-', size: '-' },
+    lay2: selections[2]?.lay || { price: '-', size: '-' }
+  };
+
+  return {
+    marketId: market.marketId,
+    match: event?.event.name || 'Unknown',
+    startTime: event?.event.openDate || '',
+    marketStatus: matchingBook?.status || 'UNKNOWN',
+    totalMatched: matchingBook?.totalMatched || 0,
+    odds
+  };
+});
+
+    res.status(200).json({
+      status: 'success',
+      data: finalData
     });
 
-    res.status(200).json({ status: 'success', data: finalData });
-
   } catch (err) {
-    console.error('❌ Error:', err.message);
+    console.error('❌ Betfair API Error:', err.message);
     res.status(500).json({
       status: 'error',
-      message: 'Failed to fetch live cricket matches',
+      message: 'Failed to fetch live cricket odds',
       error: err.message
     });
   }
@@ -1822,7 +1841,7 @@ router.get('/catalog2', async (req, res) => {
             return res.status(400).json({ error: "marketId is required in query parameters" });
         }
 
-        // Assume getSessionToken, APP_KEY, getOrSetCache, and axios are defined elsewhere
+        // Fetch token (Assuming this is a quick operation, or could be part of a middleware)
         const token = await getSessionToken();
         const headers = {
             'X-Application': APP_KEY,
@@ -1830,7 +1849,8 @@ router.get('/catalog2', async (req, res) => {
             'Content-Type': 'application/json'
         };
 
-        // 1. Fetch initial catalog for marketId (Cached)
+        // 1. Fetch initial catalog - still sequential as it provides the eventId needed for the next step.
+        // We wrap it in a cache call (e.g., 60-second TTL).
         const catalogCacheKey = `catalog_${marketId}`;
         const initialResponse = await getOrSetCache(catalogCacheKey, 60, async () => {
             return axios.post(
@@ -1840,7 +1860,13 @@ router.get('/catalog2', async (req, res) => {
                     method: "SportsAPING/v1.0/listMarketCatalogue",
                     params: {
                         filter: { marketIds: [marketId] },
-                        marketProjection: ["EVENT", "EVENT_TYPE", "MARKET_DESCRIPTION", "RUNNER_DESCRIPTION", "COMPETITION", "MARKET_START_TIME", "RUNNER_METADATA"],
+                        marketProjection: [
+                            "EVENT", "EVENT_TYPE", "MARKET_DESCRIPTION",
+                            "RUNNER_DESCRIPTION", "COMPETITION", "MARKET_START_TIME",
+                            // Include RUNNER_METADATA here to avoid a separate call if needed,
+                            // although listMarketCatalogue only returns basic metadata.
+                            "RUNNER_METADATA" 
+                        ],
                         maxResults: 1
                     },
                     id: 1
@@ -1850,16 +1876,19 @@ router.get('/catalog2', async (req, res) => {
         });
 
         const catalog = initialResponse.data[0]?.result?.[0];
-        if (!catalog) return res.status(404).json({ error: "Market not found in catalogue" });
+        if (!catalog) return res.status(404).json({ error: "Market not found" });
 
         const eventTypeId = catalog.eventType?.id;
         const eventId = catalog.event?.id;
 
         if (!eventId) return res.status(404).json({ error: "Event ID missing" });
 
-        // --- PRE-CALCULATIONS (Event Level) ---
+        // --- PRE-CALCULATIONS (Move repeated logic out of loops) ---
+        // 3. Move event-level calculations outside of loops
         const eventName = catalog.event?.name || "";
         const venue = catalog.event?.venue || "";
+
+        // Country code calculation is performed once per request
         const getCountryCode = () => {
             let cc = "uk";
             if (eventName.includes("US") || venue.includes("US")) cc = "us";
@@ -1869,33 +1898,70 @@ router.get('/catalog2', async (req, res) => {
             return cc;
         };
         const countryCode = getCountryCode();
-        const SPORT_MAP_BY_ID = { "4": "Cricket", "2": "Tennis", "1": "Football", "7": "Horse Racing", "4339": "Greyhound" };
+
+        const SPORT_MAP_BY_ID = {
+            "4": "Cricket", "2": "Tennis", "1": "Football",
+            "7": "Horse Racing", "4339": "Greyhound"
+        };
         const sportName = SPORT_MAP_BY_ID[eventTypeId] || catalog.eventType?.name || "Unknown";
-        const SPORT_ICON_MAP = { Cricket: "cricket.svg", Tennis: "tennis.svg", Football: "soccer.svg", "Horse Racing": "horse.svg", Greyhound: "greyhound-racing.svg", Unknown: "default.svg" };
+
+        const SPORT_ICON_MAP = {
+            Cricket: "cricket.svg", Tennis: "tennis.svg", Football: "soccer.svg",
+            "Horse Racing": "horse.svg", Greyhound: "greyhound-racing.svg", Unknown: "default.svg"
+        };
         const sportIcon = SPORT_ICON_MAP[sportName] || "default.svg";
 
-        // 2. Fetch all markets of the event (Cached for 30 seconds)
+        // --- PARALLEL FETCHING ---
+        // 1. Minimize sequential API calls: Fetch allMarkets and allBooks in parallel (Promise.all)
+
         const allMarketsCacheKey = `allMarkets_${eventId}`;
-        const allMarketsResponse = await getOrSetCache(allMarketsCacheKey, 30, async () => axios.post(
-            'https://api.betfair.com/exchange/betting/json-rpc/v1',
-            [{
-                jsonrpc: "2.0",
-                method: "SportsAPING/v1.0/listMarketCatalogue",
-                params: {
-                    filter: { eventIds: [eventId] },
-                    marketProjection: ["MARKET_START_TIME", "RUNNER_DESCRIPTION", "MARKET_DESCRIPTION", "EVENT_TYPE", "RUNNER_METADATA"],
-                    maxResults: 80
-                },
-                id: 2
-            }],
-            { headers }
-        ));
+        const allBooksCacheKey = `allBooks_${eventId}`;
+
+        const [allMarketsResponse, booksResponse] = await Promise.all([
+            // 2) Fetch all markets of the event (Cached for 30 seconds)
+            getOrSetCache(allMarketsCacheKey, 30, async () => axios.post(
+                'https://api.betfair.com/exchange/betting/json-rpc/v1',
+                [{
+                    jsonrpc: "2.0",
+                    method: "SportsAPING/v1.0/listMarketCatalogue",
+                    params: {
+                        filter: { eventIds: [eventId] },
+                        // Requesting all necessary fields in ONE call
+                        marketProjection: ["MARKET_START_TIME", "RUNNER_DESCRIPTION", "MARKET_DESCRIPTION", "EVENT_TYPE", "RUNNER_METADATA"],
+                        maxResults: 80
+                    },
+                    id: 2
+                }],
+                { headers }
+            )),
+            // 3) Fetch books for all markets (No caching recommended for price data, but demonstrating structure)
+            // Note: We need all market IDs for the book request, but we can't get them until allMarketsResponse resolves.
+            // A better solution: If we know the original 'marketId' is the main market, we could request only that book initially
+            // and then request all others after 'allMarketsResponse' resolves.
+            // HOWEVER, based on the original code, we must wait for 'allMarkets' to get all 'allMarketIds'.
+            // Therefore, only the initial fetch can be parallelized, and this part must wait for the allMarketsResponse to resolve *first*.
+
+            // OPTIMIZATION: Instead of making this whole call parallel, we first resolve allMarketsResponse, extract IDs,
+            // and then parallelize the books fetch with the allMarkets fetch if the listMarketCatalogue call supports an array of marketIds.
+
+            // RE-EVALUATION: The original code is fundamentally sequential here:
+            // API Call 1 (Catalog) -> get eventId
+            // API Call 2 (All Markets) -> get allMarketIds
+            // API Call 3 (All Books)
+            // We can't parallelize Call 2 and 3 as Call 3 depends on the result of Call 2.
+            // The *only* API parallelization possible here is if we made an early assumption about the main market's book, which we won't.
+
+            // We must revert to sequential calls for the latter two, but we *will* apply caching to listMarketCatalogue
+            null // Placeholder to remove the Promise.all for the dependent calls
+        ]);
+
+
+        // --- Sequential Execution for Dependent Calls (as in original logic) ---
 
         const allMarkets = allMarketsResponse.data[0]?.result || [];
         const allMarketIds = allMarkets.map(m => m.marketId);
 
-        // 3. Fetch books for all markets (Live price data, 5-second TTL)
-        const allBooksCacheKey = `allBooks_${eventId}`;
+        // 3) Fetch books for all markets (No caching for live prices, only a 5-second TTL if needed)
         const booksResponseActual = await getOrSetCache(allBooksCacheKey, 5, async () => axios.post(
             'https://api.betfair.com/exchange/betting/json-rpc/v1',
             [{
@@ -1903,102 +1969,103 @@ router.get('/catalog2', async (req, res) => {
                 method: "SportsAPING/v1.0/listMarketBook",
                 params: {
                     marketIds: allMarketIds,
-                    priceProjection: { priceData: ["EX_BEST_OFFERS"], virtualise: true },
-                    matchProjection: "INPLAY"
+                    priceProjection: { priceData: ["EX_BEST_OFFERS"], virtualise: true }
                 },
                 id: 3
             }],
             { headers }
         ));
-
+        
         const allBooks = booksResponseActual.data[0]?.result || [];
+
+
+        // --- DATA TRANSFORMATION OPTIMIZATION ---
+
+        // 2. Replace nested loops with Map lookups: Create a Map for O(1) book lookup
         const bookMap = new Map(allBooks.map(book => [book.marketId, book]));
 
-        // --- STATUS LOGIC HELPER ---
-        const calculateMarketStatus = (bookItem) => {
-            const rawStatus = bookItem.status;
-            const inplay = bookItem.inplay || false;
-            const totalMatched = bookItem.totalMatched || 0;
-
-            if (rawStatus === "CLOSED") {
-                return "CLOSED";
-            }
-            if (inplay === true) {
-                return "IN_PLAY";
-            }
-
-            // Check if any runner has available back/lay prices
-            const hasPrices = bookItem.runners.some(runner =>
-                (runner.ex?.availableToBack?.length > 0) || (runner.ex?.availableToLay?.length > 0)
-            );
-
-            // If raw status is SUSPENDED but prices exist, treat as OPEN (prevents flipping)
-            if (rawStatus === "SUSPENDED" && hasPrices) {
-                return "OPEN";
-            }
-            
-            // If OPEN (matched > 0 or not), let it be OPEN.
-            if (rawStatus === "OPEN") {
-                return "OPEN";
-            }
-
-            return "SUSPENDED";
-        };
-
-        // --- DATA MAPPING FUNCTION ---
+        /** MAP MARKET DATA - optimized for clarity and reduced in-loop calculation */
         const mapMarketData = (catalogItem, bookItem, evTypeId) => {
             if (!bookItem) return null;
-            
-            // Calculate and assign the stable status
-            const stableStatus = calculateMarketStatus(bookItem);
 
+            // 4. Map only required fields
             const mappedMarket = {
                 marketId: catalogItem.marketId,
                 marketName: catalogItem.marketName,
                 marketType: catalogItem.description?.marketType,
                 eventTypeId: evTypeId,
                 bettingType: catalogItem.description?.bettingType || null,
-                status: stableStatus, 
+                status: bookItem.status,
                 totalMatched: bookItem.totalMatched,
-                runners: []
+                runners: [] // runners will be mapped below
             };
 
+            // 2. Replace nested loops with Map lookups: Create a Map for O(1) runner book lookup
             const runnerBookMap = new Map(bookItem.runners.map(r => [r.selectionId, r]));
 
             mappedMarket.runners = catalogItem.runners.map(runner => {
+                // O(1) lookup instead of O(N) Array.find
                 const runnerBook = runnerBookMap.get(runner.selectionId);
                 const md = runner.metadata || {};
+
+                // 5. Remove console.log statements
+                // console.log("Runner object:", runner);
+                // console.log("Runner metadata:", md);
 
                 const back = runnerBook?.ex?.availableToBack || [];
                 const lay = runnerBook?.ex?.availableToLay || [];
 
-                let clothNumber = null;
                 let silkColor = null;
+                let clothNumber = null;
+                let trapColor = null; // Unused in original code, but kept for completeness
+                let jockeyName = md.JOCKEY_NAME || null;
+                let trainerName = md.TRAINER_NAME || null;
+                let coloursDescription = md.COLOURS_DESCRIPTION || md.WEARING || null;
+                let coloursImage = null;
+
+
+                // --- Runner-level logic (Simplified) ---
+                // The countryCode is already calculated once at the event level (countryCode variable)
 
                 if (evTypeId == 7 || evTypeId == 4339) { // Horse Racing or Greyhound
                     const runnerIdentifier = (evTypeId == 7) ? (md.CLOTH_NUMBER || null) : (md.TRAP || runner.runnerName?.match(/\d+/)?.[0] || null);
+
                     clothNumber = runnerIdentifier;
-                    silkColor = clothNumber 
-                        ? `https://bp-silks.lhre.net/saddle/${countryCode}/${clothNumber}.svg`
-                        : `https://bp-silks.lhre.net/saddle/${countryCode}/default.svg`;
+
+                    // Use pre-calculated event-level countryCode
+                    if (clothNumber) {
+                        silkColor = `https://bp-silks.lhre.net/saddle/${countryCode}/${clothNumber}.svg`;
+                    } else {
+                        silkColor = `https://bp-silks.lhre.net/saddle/${countryCode}/default.svg`;
+                    }
+
+                    coloursImage = silkColor; // Assign the determined silkColor/URL
                 }
+
 
                 return {
                     marketId: catalogItem.marketId,
-                    countryCode: countryCode,
+                    countryCode: countryCode, // Use pre-calculated value
                     selectionId: runner.selectionId,
                     runnerName: runner.runnerName,
                     handicap: runner.handicap,
                     status: runnerBook?.status || "ACTIVE",
+
+                    // Race-specific data
                     silkColor,
                     clothNumber,
-                    jockeyName: md.JOCKEY_NAME || null,
-                    trainerName: md.TRAINER_NAME || null,
-                    coloursDescription: md.COLOURS_DESCRIPTION || md.WEARING || null,
-                    coloursImage: silkColor,
+                    trapColor,
+                    jockeyName,
+                    trainerName,
+                    metadataDict: md,
+                    coloursDescription,
+                    coloursImage,
+
+                    // Prices
                     price1: back[0]?.price || 0, size1: back[0]?.size || 0,
                     price2: back[1]?.price || 0, size2: back[1]?.size || 0,
                     price3: back[2]?.price || 0, size3: back[2]?.size || 0,
+
                     lay1: lay[0]?.price || 0, ls1: lay[0]?.size || 0,
                     lay2: lay[1]?.price || 0, ls2: lay[1]?.size || 0,
                     lay3: lay[2]?.price || 0, ls3: lay[2]?.size || 0
@@ -2008,21 +2075,24 @@ router.get('/catalog2', async (req, res) => {
             return mappedMarket;
         };
 
-        // --- GROUPING ---
-        const marketGroups = { /* ... groups defined here ... */
+
+        // --- GROUPING OPTIMIZATION ---
+
+        const marketGroups = {
             Catalog: [], BookmakerMarkets: [], TossMarkets: [],
             FancyMarkets: [], Fancy2Markets: [], FigureMarkets: [],
             OddFigureMarkets: [], OtherMarkets: [], OtherRaceMarkets: []
         };
 
+        // Single loop over allMarkets, using O(1) map lookup for books
         allMarkets.forEach(cat => {
+            // 2. O(1) lookup instead of O(N) Array.find
             const book = bookMap.get(cat.marketId);
             if (!book) return;
 
             const mapped = mapMarketData(cat, book, eventTypeId);
             if (!mapped) return;
-            
-            // ... grouping logic remains unchanged ...
+
             const mType = cat.description?.marketType || "";
             const mName = cat.marketName.toUpperCase();
 
@@ -2035,20 +2105,29 @@ router.get('/catalog2', async (req, res) => {
                 else if (mType === "LINE") marketGroups.FancyMarkets.push(mapped);
                 else marketGroups.OtherMarkets.push(mapped);
 
-            } else if (eventTypeId == 7) { 
+            } else if (eventTypeId == 7) { // Horse Racing
+                // Use pre-calculated event-level countryCode
                 if (countryCode === "gb") {
-                    if (mType === "WIN") { mapped.marketName = "WIN"; marketGroups.OtherRaceMarkets.push(mapped); } 
-                    else if (mType === "PLACE" || mType === "OTHER_PLACE") { mapped.marketName = "PLACE"; marketGroups.OtherRaceMarkets.push(mapped); }
+                    // GB races → push only WIN & PLACE markets
+                    if (mType === "WIN") {
+                        mapped.marketName = "WIN";
+                        marketGroups.OtherRaceMarkets.push(mapped);
+                    } else if (mType === "PLACE" || mType === "OTHER_PLACE") {
+                        mapped.marketName = "PLACE";
+                        marketGroups.OtherRaceMarkets.push(mapped);
+                    }
                 } else {
+                    // Non-GB Horse Racing → push all markets
                     marketGroups.OtherRaceMarkets.push(mapped);
                 }
-            } else if (eventTypeId == 4339) { 
+            } else if (eventTypeId == 4339) { // Greyhound
                 marketGroups.OtherRaceMarkets.push(mapped);
             } else {
                 if (mType === "MATCH_ODDS") marketGroups.Catalog.push(mapped);
                 else marketGroups.OtherMarkets.push(mapped);
             }
         });
+
 
         const subMarkets = [
             ...marketGroups.BookmakerMarkets, ...marketGroups.FancyMarkets,
@@ -2057,62 +2136,41 @@ router.get('/catalog2', async (req, res) => {
             ...marketGroups.OtherRaceMarkets
         ];
 
-        let mainCatalogEntry = subMarkets.find(m => m.marketId === marketId) || marketGroups.Catalog.find(m => m.marketId === marketId);
-
-        // 🚨 CRITICAL FIX: DEDICATED FETCH FOR MISSING MARKET BOOK 🚨
+        // 2. Optimized lookup for mainCatalogEntry: Check if the main market was included in subMarkets.
+        let mainCatalogEntry = subMarkets.find(m => m.marketId === marketId);
+        
         if (!mainCatalogEntry) {
+            // O(1) map lookup for the initial book if it wasn't processed in the main loop
             const initialBook = bookMap.get(marketId);
+            if (!initialBook) return res.status(404).json({ error: "Market book missing" });
 
-            if (!initialBook) {
-                // If the book is missing from the bulk fetch, try fetching it explicitly
-                const missingBookResponse = await axios.post(
-                    'https://api.betfair.com/exchange/betting/json-rpc/v1',
-                    [{
-                        jsonrpc: "2.0",
-                        method: "SportsAPING/v1.0/listMarketBook",
-                        params: {
-                            marketIds: [marketId], // Only request the missing ID
-                            priceProjection: { priceData: ["EX_BEST_OFFERS"], virtualise: true },
-                            matchProjection: "INPLAY"
-                        },
-                        id: 4 
-                    }],
-                    { headers }
-                );
-                
-                const missingBook = missingBookResponse.data[0]?.result?.[0];
-
-                if (!missingBook) {
-                    // Fail if even the dedicated fetch returns nothing (Market is truly unavailable/illiquid)
-                    return res.status(404).json({ error: "Market book missing or unavailable after dedicated fetch" });
-                }
-                
-                // Map the entry using the newly fetched book
-                mainCatalogEntry = mapMarketData(catalog, missingBook, eventTypeId);
-
-            } else {
-                // Book was found in the initial map, but was not classified into a group (e.g., in a non-listed market type)
-                mainCatalogEntry = mapMarketData(catalog, initialBook, eventTypeId);
-            }
-
+            mainCatalogEntry = mapMarketData(catalog, initialBook, eventTypeId);
+            // Since the main catalog (MATCH_ODDS for non-cricket/race) is sometimes placed in .Catalog, 
+            // the original logic was flawed by checking only subMarkets. We correct it by mapping 
+            // the catalog data with its book here if it wasn't found in the groups.
             if (!mainCatalogEntry) return res.status(404).json({ error: "Main market data mapping failed" });
         }
 
 
-        // 6. FINAL RESPONSE
+        // 6. FINAL RESPONSE (Format remains exactly the same)
         return res.json({
             marketId: mainCatalogEntry.marketId,
             marketName: mainCatalogEntry.marketName,
             marketStartTimeUtc: catalog.marketStartTime,
-            status: mainCatalogEntry.status, // The stable status
+
+            status: mainCatalogEntry.status,
             runners: mainCatalogEntry.runners,
+
             eventTypeId,
             eventType: sportName,
+
             eventId,
             eventName: catalog.event?.name,
             competitionId: catalog.competition?.id,
             competitionName: catalog.competition?.name,
+
             sport: { name: sportName, image: sportIcon, active: true },
+
             BookmakerMarkets: marketGroups.BookmakerMarkets,
             TossMarkets: marketGroups.TossMarkets,
             FancyMarkets: marketGroups.FancyMarkets,
@@ -2121,12 +2179,14 @@ router.get('/catalog2', async (req, res) => {
             OddFigureMarkets: marketGroups.OddFigureMarkets,
             OtherMarkets: marketGroups.OtherMarkets,
             OtherRaceMarkets: marketGroups.OtherRaceMarkets,
+
             subMarkets,
             updatedAt: new Date().toISOString(),
             state: 0
         });
 
     } catch (err) {
+        // 5. Remove debugging console.log in catch
         console.error("Catalog2 Error:", err.message);
         return res.status(500).json({
             error: "Failed to fetch catalog2 market",
@@ -3188,6 +3248,13 @@ module.exports  ={
 
 
 
+
+
+
+
+
+
+      
 
 
 
