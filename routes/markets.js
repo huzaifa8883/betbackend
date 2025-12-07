@@ -1833,10 +1833,9 @@ const sportMap = {
   4339: { name: "Horse Racing", image: "horse.svg" },
  
 
-const smoothingState = new Map(); 
-
-// Status Hold state: Stores the last *raw* status and the time it was first observed (marketId -> {status: string, lastChangeTime: number, confirmedStatus: string})
+};
 const statusHoldState = new Map();
+const smoothingState = new Map(); 
 
 // Throttling state: Stores the last time a response was sent (marketId -> lastReportTime)
 const throttleState = new Map();
