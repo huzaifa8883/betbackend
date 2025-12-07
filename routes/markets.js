@@ -2242,10 +2242,9 @@ router.get('/catalog2', async (req, res) => {
     return res.status(500).json({
         error: "Failed to fetch catalog2 market",
         details: err.response?.statusText || err.message
-    });
-}
+      });
+    }
 });
-
 router.get('/Data', async (req, res) => {
   const marketId = req.query.id;
   if (!marketId) {
