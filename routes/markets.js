@@ -2126,32 +2126,31 @@ router.get('/catalog2', async (req, res) => {
       default: return res.status(400).json({ error: "Unsupported eventTypeId" });
     }
 
-    // Ignore SSL certificate errors temporarily
     const agent = new https.Agent({ rejectUnauthorized: false });
     const response = await axios.get(endpoint, { httpsAgent: agent });
     const catalog = response.data;
 
     if (!catalog) return res.status(404).json({ error: "Market not found" });
 
-    // Map runners and odds
-    const runners = (catalog.runners || []).map(runner => ({
-      id: runner.id || runner.selectionId,
-      name: runner.name,
-      hdp: runner.hdp || 0,
-      sort: runner.sort || 1,
-      back: runner.back || [],
-      lay: runner.lay || [],
-      lastPriceTraded: runner.lastPriceTraded || 0,
-      totalMatched: runner.totalMatched || 0,
-      status: runner.status || "ACTIVE"
+    // Map runners with odds (like /live/cricket)
+    const runners = (catalog.runners || []).map(r => ({
+      id: r.id || r.selectionId,
+      name: r.name,
+      hdp: r.hdp || 0,
+      sort: r.sort || 1,
+      back: r.back || [],
+      lay: r.lay || [],
+      lastPriceTraded: r.lastPriceTraded || 0,
+      totalMatched: r.totalMatched || 0,
+      status: r.status || "ACTIVE"
     }));
 
-    // Prepare final API response similar to Betfair style
+    const numRunners = runners.length;
+    const numActiveRunners = runners.filter(r => r.status === 'ACTIVE').length;
+    const totalMatched = runners.reduce((acc, r) => acc + (r.totalMatched || 0), 0);
+
     const result = {
-      status: {
-        statusCode: "0",
-        statusDesc: "Success"
-      },
+      status: { statusCode: "0", statusDesc: "Success" },
       success: true,
       result: [
         {
@@ -2173,16 +2172,13 @@ router.get('/catalog2', async (req, res) => {
             countryCodeISO2: catalog.countryCode || "GB",
             altName: catalog.eventName || ""
           },
-          eventTypeId: eventTypeId,
+          eventTypeId,
           inPlay: catalog.inPlay || false,
-          competition: {
-            id: catalog.competitionId || null,
-            name: catalog.competitionName || ""
-          },
-          matched: catalog.totalMatched || 0,
+          competition: { id: catalog.competitionId || null, name: catalog.competitionName || "" },
+          matched: totalMatched,
           numWinners: 1,
-          numRunners: runners.length,
-          numActiveRunners: runners.length,
+          numRunners,
+          numActiveRunners,
           status: catalog.status || "OPEN",
           runners,
           maxLiabilityPerBet: null,
