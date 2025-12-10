@@ -1964,7 +1964,7 @@ router.get('/catalog2', async (req, res) => {
         const allMarketIds = allMarkets.map(m => m.marketId);
 
         // 3) Fetch books for all markets (No caching for live prices, only a 5-second TTL if needed)
-        const booksResponseActual = await getOrSetCache(allBooksCacheKey, 5, async () => axios.post(
+        const booksResponseActual = await getOrSetCache(allBooksCacheKey, 2, async () => axios.post(
             'https://api.betfair.com/exchange/betting/json-rpc/v1',
             [{
                 jsonrpc: "2.0",
