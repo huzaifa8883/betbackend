@@ -2197,6 +2197,98 @@ router.get('/catalog2', async (req, res) => {
     }
 });
 
+router.get('/scorecard', async (req, res) => {
+    try {
+        const matchId = req.query.matchid;
+        if (!matchId) {
+            return res.status(400).json({ error: "matchid is required in query parameters" });
+        }
+
+        // Token ya headers same way fetch karenge jaise catalog2 mein hai
+        const token = await getSessionToken();
+        const headers = {
+            'X-Application': APP_KEY,
+            'X-Authentication': token,
+            'Content-Type': 'application/json'
+        };
+
+        // 1. Fetch match details from API
+        const matchCacheKey = `match_${matchId}`;
+        const matchResponse = await getOrSetCache(matchCacheKey, 60, async () => {
+            return axios.post(
+                'https://api.betfair.com/exchange/betting/json-rpc/v1',
+                [{
+                    jsonrpc: "2.0",
+                    method: "SportsAPING/v1.0/listMarketCatalogue",
+                    params: {
+                        filter: { eventIds: [matchId] },
+                        marketProjection: ["EVENT", "EVENT_TYPE", "RUNNER_DESCRIPTION", "MARKET_DESCRIPTION"],
+                        maxResults: 1
+                    },
+                    id: 1
+                }],
+                { headers }
+            );
+        });
+
+        const matchData = matchResponse.data[0]?.result?.[0];
+        if (!matchData) return res.status(404).json({ error: "Match not found" });
+
+        // 2. Fetch scorecard / market book (like catalog2 uses listMarketBook)
+        const scorebookCacheKey = `scorebook_${matchId}`;
+        const scorebookResponse = await getOrSetCache(scorebookCacheKey, 30, async () => {
+            return axios.post(
+                'https://api.betfair.com/exchange/betting/json-rpc/v1',
+                [{
+                    jsonrpc: "2.0",
+                    method: "SportsAPING/v1.0/listMarketBook",
+                    params: {
+                        marketIds: [matchId],
+                        priceProjection: { priceData: ["EX_BEST_OFFERS"], virtualise: true }
+                    },
+                    id: 2
+                }],
+                { headers }
+            );
+        });
+
+        const scorebook = scorebookResponse.data[0]?.result[0];
+
+        // 3. Transform / map data for response, runners, scores, etc.
+        const runners = (matchData.runners || []).map(runner => {
+            const bookRunner = scorebook?.runners?.find(r => r.selectionId === runner.selectionId) || {};
+            return {
+                selectionId: runner.selectionId,
+                runnerName: runner.runnerName,
+                status: bookRunner.status || "ACTIVE",
+                runs: bookRunner.runs || 0,
+                wickets: bookRunner.wickets || 0,
+                balls: bookRunner.balls || 0
+            };
+        });
+
+        // 4. Return response in catalog2-style structure
+        return res.json({
+            matchId: matchData.event?.id,
+            matchName: matchData.event?.name,
+            eventTypeId: matchData.eventType?.id,
+            eventType: matchData.eventType?.name,
+            startTime: matchData.marketStartTime,
+            runners,
+            updatedAt: new Date().toISOString(),
+            state: 0
+        });
+
+    } catch (err) {
+        console.error("Scorecard Error:", err.message);
+        return res.status(500).json({
+            error: "Failed to fetch scorecard",
+            details: err.response?.statusText || err.message
+        });
+    }
+});
+
+
 router.get('/Data', async (req, res) => {
   const marketId = req.query.id;
   if (!marketId) {
