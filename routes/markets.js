@@ -367,205 +367,151 @@ async function betfairRpc(method, params) {
     return null;
   }
 }
-// router.get('/live/cricket', async (req, res) => {
-//   try {
-//     const sessionToken = await getSessionToken();
-
-//     // 🎯 Step 1: Get cricket events
-//     const eventsResponse = await axios.post(
-//       'https://api.betfair.com/exchange/betting/json-rpc/v1',
-//       [
-//         {
-//           jsonrpc: '2.0',
-//           method: 'SportsAPING/v1.0/listEvents',
-//           params: {
-//             filter: {
-//               eventTypeIds: ['4'],
-//               // marketStartTime: {
-//               //   from: new Date().toISOString()
-//               // }
-//             }
-//           },
-//           id: 1
-//         }
-//       ],
-//       {
-//         headers: {
-//           'X-Application': APP_KEY,
-//           'X-Authentication': sessionToken,
-//           'Content-Type': 'application/json'
-//         }
-//       }
-//     );
-
-//     const events = eventsResponse.data[0]?.result || [];
-//     const eventIds = events.map(e => e.event.id);
-
-//     // 🎯 Step 2: Get market catalogue
-//     const marketCatalogueResponse = await axios.post(
-//       'https://api.betfair.com/exchange/betting/json-rpc/v1',
-//       [
-//         {
-//           jsonrpc: '2.0',
-//           method: 'SportsAPING/v1.0/listMarketCatalogue',
-//           params: {
-//             filter: {
-//               eventIds: eventIds,
-//               marketTypeCodes: ['MATCH_ODDS']
-//             },
-//             maxResults: '10',
-//             marketProjection: ['EVENT', 'RUNNER_METADATA']
-//           },
-//           id: 2
-//         }
-//       ],
-//       {
-//         headers: {
-//           'X-Application': APP_KEY,
-//           'X-Authentication': sessionToken,
-//           'Content-Type': 'application/json'
-//         }
-//       }
-//     );
-
-//     const marketCatalogues = marketCatalogueResponse.data[0]?.result || [];
-//     const marketIds = marketCatalogues.map(m => m.marketId);
-
-//     // 🎯 Step 3: Get market books (odds + volume)
-//     const marketBookResponse = await axios.post(
-//       'https://api.betfair.com/exchange/betting/json-rpc/v1',
-//       [
-//         {
-//           jsonrpc: '2.0',
-//           method: 'SportsAPING/v1.0/listMarketBook',
-//           params: {
-//             marketIds: marketIds,
-//             priceProjection: {
-//               priceData: ['EX_BEST_OFFERS']
-//             }
-//           },
-//           id: 3
-//         }
-//       ],
-//       {
-//         headers: {
-//           'X-Application': APP_KEY,
-//           'X-Authentication': sessionToken,
-//           'Content-Type': 'application/json'
-//         }
-//       }
-//     );
-
-//     const marketBooks = marketBookResponse.data[0]?.result || [];
-
-//     // 🔄 Combine data
-//     // 🔄 Combine data
-// const finalData = marketCatalogues.map(market => {
-//   const matchingBook = marketBooks.find(b => b.marketId === market.marketId);
-//   const event = events.find(e => e.event.id === market.event.id);
-
-//   const selections = market.runners.map(runner => {
-//     const runnerBook = matchingBook?.runners.find(r => r.selectionId === runner.selectionId);
-//     return {
-//       name: runner.runnerName,
-//       back: runnerBook?.ex?.availableToBack?.[0] || { price: '-', size: '-' },
-//       lay: runnerBook?.ex?.availableToLay?.[0] || { price: '-', size: '-' }
-//     };
-//   });
-
-//   // 🧠 Assume:
-//   // selections[0] = team 1
-//   // selections[1] = X (draw) — only in soccer
-//   // selections[2] = team 2
-
-//   const odds = {
-//     back1: selections[0]?.back || { price: '-', size: '-' },
-//     lay1: selections[0]?.lay || { price: '-', size: '-' },
-//     backX: selections[1]?.back || { price: '-', size: '-' },
-//     layX: selections[1]?.lay || { price: '-', size: '-' },
-//     back2: selections[2]?.back || { price: '-', size: '-' },
-//     lay2: selections[2]?.lay || { price: '-', size: '-' }
-//   };
-
-//   return {
-//     marketId: market.marketId,
-//     match: event?.event.name || 'Unknown',
-//     startTime: event?.event.openDate || '',
-//     marketStatus: matchingBook?.status || 'UNKNOWN',
-//     totalMatched: matchingBook?.totalMatched || 0,
-//     odds
-//   };
-// });
-
-//     res.status(200).json({
-//       status: 'success',
-//       data: finalData
-//     });
-
-//   } catch (err) {
-//     console.error('❌ Betfair API Error:', err.message);
-//     res.status(500).json({
-//       status: 'error',
-//       message: 'Failed to fetch live cricket odds',
-//       error: err.message
-//     });
-//   }
-// });
 router.get('/live/cricket', async (req, res) => {
   try {
-    const agent = new https.Agent({ rejectUnauthorized: false });
+    const sessionToken = await getSessionToken();
 
-    // Step 1: Fetch all matches
-    const allMatchesResponse = await axios.get(
-      'https://gold3patti.biz:4000/cricket/allmatches',
-      { httpsAgent: agent }
+    // 🎯 Step 1: Get cricket events
+    const eventsResponse = await axios.post(
+      'https://api.betfair.com/exchange/betting/json-rpc/v1',
+      [
+        {
+          jsonrpc: '2.0',
+          method: 'SportsAPING/v1.0/listEvents',
+          params: {
+            filter: {
+              eventTypeIds: ['4'],
+              // marketStartTime: {
+              //   from: new Date().toISOString()
+              // }
+            }
+          },
+          id: 1
+        }
+      ],
+      {
+        headers: {
+          'X-Application': APP_KEY,
+          'X-Authentication': sessionToken,
+          'Content-Type': 'application/json'
+        }
+      }
     );
 
-    const matches = allMatchesResponse.data?.data?.result || [];
+    const events = eventsResponse.data[0]?.result || [];
+    const eventIds = events.map(e => e.event.id);
 
-    if (!matches.length) {
-      return res.status(200).json({ status: 'success', data: [] });
-    }
+    // 🎯 Step 2: Get market catalogue
+    const marketCatalogueResponse = await axios.post(
+      'https://api.betfair.com/exchange/betting/json-rpc/v1',
+      [
+        {
+          jsonrpc: '2.0',
+          method: 'SportsAPING/v1.0/listMarketCatalogue',
+          params: {
+            filter: {
+              eventIds: eventIds,
+              marketTypeCodes: ['MATCH_ODDS']
+            },
+            maxResults: '10',
+            marketProjection: ['EVENT', 'RUNNER_METADATA']
+          },
+          id: 2
+        }
+      ],
+      {
+        headers: {
+          'X-Application': APP_KEY,
+          'X-Authentication': sessionToken,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
 
-    const finalData = matches.map(match => {
-      const runners = match.runners || [];
+    const marketCatalogues = marketCatalogueResponse.data[0]?.result || [];
+    const marketIds = marketCatalogues.map(m => m.marketId);
 
-      const selections = runners.map(r => ({
-        name: r.name,
-        back: r.back?.[0] || { price: "-", size: "-" },
-        lay: r.lay?.[0] || { price: "-", size: "-" }
-      }));
+    // 🎯 Step 3: Get market books (odds + volume)
+    const marketBookResponse = await axios.post(
+      'https://api.betfair.com/exchange/betting/json-rpc/v1',
+      [
+        {
+          jsonrpc: '2.0',
+          method: 'SportsAPING/v1.0/listMarketBook',
+          params: {
+            marketIds: marketIds,
+            priceProjection: {
+              priceData: ['EX_BEST_OFFERS']
+            }
+          },
+          id: 3
+        }
+      ],
+      {
+        headers: {
+          'X-Application': APP_KEY,
+          'X-Authentication': sessionToken,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
 
-      const odds = {
-        back1: selections[0]?.back || { price: "-", size: "-" },
-        lay1: selections[0]?.lay || { price: "-", size: "-" },
-        back2: selections[1]?.back || { price: "-", size: "-" },
-        lay2: selections[1]?.lay || { price: "-", size: "-" },
-        back3: selections[2]?.back || { price: "-", size: "-" },
-        lay3: selections[2]?.lay || { price: "-", size: "-" }
-      };
+    const marketBooks = marketBookResponse.data[0]?.result || [];
 
-      return {
-        matchId: match.id,
-        match: match.event?.name || 'Unknown',
-        startTime: match.event?.openDate || '',
-        marketStatus: match.status || 'UNKNOWN',
-        totalMatched: null,
-        odds
-      };
+    // 🔄 Combine data
+    // 🔄 Combine data
+const finalData = marketCatalogues.map(market => {
+  const matchingBook = marketBooks.find(b => b.marketId === market.marketId);
+  const event = events.find(e => e.event.id === market.event.id);
+
+  const selections = market.runners.map(runner => {
+    const runnerBook = matchingBook?.runners.find(r => r.selectionId === runner.selectionId);
+    return {
+      name: runner.runnerName,
+      back: runnerBook?.ex?.availableToBack?.[0] || { price: '-', size: '-' },
+      lay: runnerBook?.ex?.availableToLay?.[0] || { price: '-', size: '-' }
+    };
+  });
+
+  // 🧠 Assume:
+  // selections[0] = team 1
+  // selections[1] = X (draw) — only in soccer
+  // selections[2] = team 2
+
+  const odds = {
+    back1: selections[0]?.back || { price: '-', size: '-' },
+    lay1: selections[0]?.lay || { price: '-', size: '-' },
+    backX: selections[1]?.back || { price: '-', size: '-' },
+    layX: selections[1]?.lay || { price: '-', size: '-' },
+    back2: selections[2]?.back || { price: '-', size: '-' },
+    lay2: selections[2]?.lay || { price: '-', size: '-' }
+  };
+
+  return {
+    marketId: market.marketId,
+    match: event?.event.name || 'Unknown',
+    startTime: event?.event.openDate || '',
+    marketStatus: matchingBook?.status || 'UNKNOWN',
+    totalMatched: matchingBook?.totalMatched || 0,
+    odds
+  };
+});
+
+    res.status(200).json({
+      status: 'success',
+      data: finalData
     });
 
-    res.status(200).json({ status: 'success', data: finalData });
-
   } catch (err) {
-    console.error('❌ Error:', err.message);
+    console.error('❌ Betfair API Error:', err.message);
     res.status(500).json({
       status: 'error',
-      message: 'Failed to fetch live cricket matches',
+      message: 'Failed to fetch live cricket odds',
       error: err.message
     });
   }
 });
+
 async function betfairRpc(method, params) {
   const sessionToken = await getSessionToken();
   const res = await axios.post(
