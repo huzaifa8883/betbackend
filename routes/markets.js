@@ -2838,42 +2838,77 @@ const sportName = req.params.sport.toLowerCase();
   }
 });
 router.get('/scorecard/:marketId', async (req, res) => {
-  try {
-    const { marketId } = req.params;
-    const sessionToken = await getSessionToken();
+    try {
+        const { marketId } = req.params;
+        const sessionToken = await getSessionToken();
 
-    // ⚠️ Betfair me scorecard ke liye actual endpoint chahiye hoga
-    const response = await axios.post(
-      'https://api.betfair.com/exchange/betting/rest/v1.0/listMarketBook/',
-      [
-        {
-          marketId: marketId,
-          priceProjection: {
-            priceData: ['EX_BEST_OFFERS']
-          }
-        }
-      ],
-      {
-        headers: {
-          'X-Application': APP_KEY,
-          'X-Authentication': sessionToken,
-          'Content-Type': 'application/json'
-        }
-      }
-    );
+        const response = await axios.post(
+            'https://api.betfair.com/exchange/betting/rest/v1.0/listMarketBook/',
+            [{
+                marketId,
+                priceProjection: {
+                    priceData: ['EX_BEST_OFFERS']
+                }
+            }],
+            {
+                headers: {
+                    'X-Application': APP_KEY,
+                    'X-Authentication': sessionToken,
+                    'Content-Type': 'application/json'
+                }
+            }
+        );
 
-    res.json({
-      status: 'success',
-      data: response.data
-    });
-  } catch (err) {
-    console.error('❌ Scorecard Fetch Error:', err.message);
-    res.status(500).json({
-      status: 'error',
-      message: 'Failed to fetch scorecard',
-      error: err.message
-    });
-  }
+        const data = response.data[0]; // Betfair data
+        if (!data || !data.runners) {
+            return res.send('<p>No data available for this market</p>');
+        }
+
+        // Generate HTML table
+        let html = `
+            <html>
+            <head>
+                <style>
+                    table { width:100%; border-collapse:collapse; font-family:Arial; }
+                    th, td { border:1px solid #ccc; padding:5px; text-align:center; }
+                    th { background-color:#333; color:white; }
+                    tr:nth-child(even) { background-color:#f2f2f2; }
+                </style>
+            </head>
+            <body>
+                <h3>Market ID: ${marketId}</h3>
+                <table>
+                    <tr>
+                        <th>Runner Name</th>
+                        <th>Status</th>
+                        <th>Back Price</th>
+                        <th>Lay Price</th>
+                    </tr>
+        `;
+        data.runners.forEach(r => {
+            const back = r.ex?.availableToBack?.[0]?.price || '-';
+            const lay = r.ex?.availableToLay?.[0]?.price || '-';
+            html += `
+                <tr>
+                    <td>${r.runnerName}</td>
+                    <td>${r.status}</td>
+                    <td>${back}</td>
+                    <td>${lay}</td>
+                </tr>
+            `;
+        });
+
+        html += `
+                </table>
+            </body>
+            </html>
+        `;
+        res.send(html);
+
+    } catch (err) {
+        console.error('❌ Scorecard Fetch Error:', err.message);
+        res.send('<p>Failed to load scorecard</p>');
+    }
 });
 
 router.get('/:marketId', async (req, res) => {
