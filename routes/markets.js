@@ -198,49 +198,49 @@ const getUsersCollection = () => {
 let cachedSessionToken = null;
 let tokenExpiryTime = null;  // timestamp jab token expire ho jayega
 
-async function getSessionToken() {
-  const now = Date.now();
+// async function getSessionToken() {
+//   const now = Date.now();
 
-  // Agar token exist karta hai aur expire nahi hua
-  if (cachedSessionToken && tokenExpiryTime && now < tokenExpiryTime) {
-    return cachedSessionToken;
-  }
+//   // Agar token exist karta hai aur expire nahi hua
+//   if (cachedSessionToken && tokenExpiryTime && now < tokenExpiryTime) {
+//     return cachedSessionToken;
+//   }
 
-  // Naya token generate karo
-  try {
-    const response = await axios.post(
-      'https://identitysso.betfair.com/api/login',
-      new URLSearchParams({
-        username: USERNAME,
-        password: PASSWORD
-      }),
-      {
-        headers: {
-          'X-Application': APP_KEY,
-          'Content-Type': 'application/x-www-form-urlencoded'
-        }
-      }
-    );
+//   // Naya token generate karo
+//   try {
+//     const response = await axios.post(
+//       'https://identitysso.betfair.com/api/login',
+//       new URLSearchParams({
+//         username: USERNAME,
+//         password: PASSWORD
+//       }),
+//       {
+//         headers: {
+//           'X-Application': APP_KEY,
+//           'Content-Type': 'application/x-www-form-urlencoded'
+//         }
+//       }
+//     );
 
-    const data = response.data;
+//     const data = response.data;
 
-    if (data.status === 'SUCCESS') {
-      cachedSessionToken = data.token;
+//     if (data.status === 'SUCCESS') {
+//       cachedSessionToken = data.token;
 
-      // Token ki expiry approx 30 mins hoti hai, aap Betfair docs check karen
-      tokenExpiryTime = now + 29 * 60 * 1000; // 29 minutes baad expire kar do
+//       // Token ki expiry approx 30 mins hoti hai, aap Betfair docs check karen
+//       tokenExpiryTime = now + 29 * 60 * 1000; // 29 minutes baad expire kar do
 
-      console.log('New session token generated');
+//       console.log('New session token generated');
 
-      return cachedSessionToken;
-    } else {
-      throw new Error(`Login failed: ${data.error}`);
-    }
-  } catch (err) {
-    console.error('❌ Failed to login to Betfair:', err.message);
-    throw err;
-  }
-}
+//       return cachedSessionToken;
+//     } else {
+//       throw new Error(`Login failed: ${data.error}`);
+//     }
+//   } catch (err) {
+//     console.error('❌ Failed to login to Betfair:', err.message);
+//     throw err;
+//   }
+// }
 const sportMapById = {
   1: "Soccer",
   2: "Tennis", 
@@ -367,150 +367,150 @@ async function betfairRpc(method, params) {
     return null;
   }
 }
-router.get('/live/cricket', async (req, res) => {
-  try {
-    const sessionToken = await getSessionToken();
+// router.get('/live/cricket', async (req, res) => {
+//   try {
+//     const sessionToken = await getSessionToken();
 
-    // 🎯 Step 1: Get cricket events
-    const eventsResponse = await axios.post(
-      'https://api.betfair.com/exchange/betting/json-rpc/v1',
-      [
-        {
-          jsonrpc: '2.0',
-          method: 'SportsAPING/v1.0/listEvents',
-          params: {
-            filter: {
-              eventTypeIds: ['4'],
-              // marketStartTime: {
-              //   from: new Date().toISOString()
-              // }
-            }
-          },
-          id: 1
-        }
-      ],
-      {
-        headers: {
-          'X-Application': APP_KEY,
-          'X-Authentication': sessionToken,
-          'Content-Type': 'application/json'
-        }
-      }
-    );
+//     // 🎯 Step 1: Get cricket events
+//     const eventsResponse = await axios.post(
+//       'https://api.betfair.com/exchange/betting/json-rpc/v1',
+//       [
+//         {
+//           jsonrpc: '2.0',
+//           method: 'SportsAPING/v1.0/listEvents',
+//           params: {
+//             filter: {
+//               eventTypeIds: ['4'],
+//               // marketStartTime: {
+//               //   from: new Date().toISOString()
+//               // }
+//             }
+//           },
+//           id: 1
+//         }
+//       ],
+//       {
+//         headers: {
+//           'X-Application': APP_KEY,
+//           'X-Authentication': sessionToken,
+//           'Content-Type': 'application/json'
+//         }
+//       }
+//     );
 
-    const events = eventsResponse.data[0]?.result || [];
-    const eventIds = events.map(e => e.event.id);
+//     const events = eventsResponse.data[0]?.result || [];
+//     const eventIds = events.map(e => e.event.id);
 
-    // 🎯 Step 2: Get market catalogue
-    const marketCatalogueResponse = await axios.post(
-      'https://api.betfair.com/exchange/betting/json-rpc/v1',
-      [
-        {
-          jsonrpc: '2.0',
-          method: 'SportsAPING/v1.0/listMarketCatalogue',
-          params: {
-            filter: {
-              eventIds: eventIds,
-              marketTypeCodes: ['MATCH_ODDS']
-            },
-            maxResults: '10',
-            marketProjection: ['EVENT', 'RUNNER_METADATA']
-          },
-          id: 2
-        }
-      ],
-      {
-        headers: {
-          'X-Application': APP_KEY,
-          'X-Authentication': sessionToken,
-          'Content-Type': 'application/json'
-        }
-      }
-    );
+//     // 🎯 Step 2: Get market catalogue
+//     const marketCatalogueResponse = await axios.post(
+//       'https://api.betfair.com/exchange/betting/json-rpc/v1',
+//       [
+//         {
+//           jsonrpc: '2.0',
+//           method: 'SportsAPING/v1.0/listMarketCatalogue',
+//           params: {
+//             filter: {
+//               eventIds: eventIds,
+//               marketTypeCodes: ['MATCH_ODDS']
+//             },
+//             maxResults: '10',
+//             marketProjection: ['EVENT', 'RUNNER_METADATA']
+//           },
+//           id: 2
+//         }
+//       ],
+//       {
+//         headers: {
+//           'X-Application': APP_KEY,
+//           'X-Authentication': sessionToken,
+//           'Content-Type': 'application/json'
+//         }
+//       }
+//     );
 
-    const marketCatalogues = marketCatalogueResponse.data[0]?.result || [];
-    const marketIds = marketCatalogues.map(m => m.marketId);
+//     const marketCatalogues = marketCatalogueResponse.data[0]?.result || [];
+//     const marketIds = marketCatalogues.map(m => m.marketId);
 
-    // 🎯 Step 3: Get market books (odds + volume)
-    const marketBookResponse = await axios.post(
-      'https://api.betfair.com/exchange/betting/json-rpc/v1',
-      [
-        {
-          jsonrpc: '2.0',
-          method: 'SportsAPING/v1.0/listMarketBook',
-          params: {
-            marketIds: marketIds,
-            priceProjection: {
-              priceData: ['EX_BEST_OFFERS']
-            }
-          },
-          id: 3
-        }
-      ],
-      {
-        headers: {
-          'X-Application': APP_KEY,
-          'X-Authentication': sessionToken,
-          'Content-Type': 'application/json'
-        }
-      }
-    );
+//     // 🎯 Step 3: Get market books (odds + volume)
+//     const marketBookResponse = await axios.post(
+//       'https://api.betfair.com/exchange/betting/json-rpc/v1',
+//       [
+//         {
+//           jsonrpc: '2.0',
+//           method: 'SportsAPING/v1.0/listMarketBook',
+//           params: {
+//             marketIds: marketIds,
+//             priceProjection: {
+//               priceData: ['EX_BEST_OFFERS']
+//             }
+//           },
+//           id: 3
+//         }
+//       ],
+//       {
+//         headers: {
+//           'X-Application': APP_KEY,
+//           'X-Authentication': sessionToken,
+//           'Content-Type': 'application/json'
+//         }
+//       }
+//     );
 
-    const marketBooks = marketBookResponse.data[0]?.result || [];
+//     const marketBooks = marketBookResponse.data[0]?.result || [];
 
-    // 🔄 Combine data
-    // 🔄 Combine data
-const finalData = marketCatalogues.map(market => {
-  const matchingBook = marketBooks.find(b => b.marketId === market.marketId);
-  const event = events.find(e => e.event.id === market.event.id);
+//     // 🔄 Combine data
+//     // 🔄 Combine data
+// const finalData = marketCatalogues.map(market => {
+//   const matchingBook = marketBooks.find(b => b.marketId === market.marketId);
+//   const event = events.find(e => e.event.id === market.event.id);
 
-  const selections = market.runners.map(runner => {
-    const runnerBook = matchingBook?.runners.find(r => r.selectionId === runner.selectionId);
-    return {
-      name: runner.runnerName,
-      back: runnerBook?.ex?.availableToBack?.[0] || { price: '-', size: '-' },
-      lay: runnerBook?.ex?.availableToLay?.[0] || { price: '-', size: '-' }
-    };
-  });
+//   const selections = market.runners.map(runner => {
+//     const runnerBook = matchingBook?.runners.find(r => r.selectionId === runner.selectionId);
+//     return {
+//       name: runner.runnerName,
+//       back: runnerBook?.ex?.availableToBack?.[0] || { price: '-', size: '-' },
+//       lay: runnerBook?.ex?.availableToLay?.[0] || { price: '-', size: '-' }
+//     };
+//   });
 
-  // 🧠 Assume:
-  // selections[0] = team 1
-  // selections[1] = X (draw) — only in soccer
-  // selections[2] = team 2
+//   // 🧠 Assume:
+//   // selections[0] = team 1
+//   // selections[1] = X (draw) — only in soccer
+//   // selections[2] = team 2
 
-  const odds = {
-    back1: selections[0]?.back || { price: '-', size: '-' },
-    lay1: selections[0]?.lay || { price: '-', size: '-' },
-    backX: selections[1]?.back || { price: '-', size: '-' },
-    layX: selections[1]?.lay || { price: '-', size: '-' },
-    back2: selections[2]?.back || { price: '-', size: '-' },
-    lay2: selections[2]?.lay || { price: '-', size: '-' }
-  };
+//   const odds = {
+//     back1: selections[0]?.back || { price: '-', size: '-' },
+//     lay1: selections[0]?.lay || { price: '-', size: '-' },
+//     backX: selections[1]?.back || { price: '-', size: '-' },
+//     layX: selections[1]?.lay || { price: '-', size: '-' },
+//     back2: selections[2]?.back || { price: '-', size: '-' },
+//     lay2: selections[2]?.lay || { price: '-', size: '-' }
+//   };
 
-  return {
-    marketId: market.marketId,
-    match: event?.event.name || 'Unknown',
-    startTime: event?.event.openDate || '',
-    marketStatus: matchingBook?.status || 'UNKNOWN',
-    totalMatched: matchingBook?.totalMatched || 0,
-    odds
-  };
-});
+//   return {
+//     marketId: market.marketId,
+//     match: event?.event.name || 'Unknown',
+//     startTime: event?.event.openDate || '',
+//     marketStatus: matchingBook?.status || 'UNKNOWN',
+//     totalMatched: matchingBook?.totalMatched || 0,
+//     odds
+//   };
+// });
 
-    res.status(200).json({
-      status: 'success',
-      data: finalData
-    });
+//     res.status(200).json({
+//       status: 'success',
+//       data: finalData
+//     });
 
-  } catch (err) {
-    console.error('❌ Betfair API Error:', err.message);
-    res.status(500).json({
-      status: 'error',
-      message: 'Failed to fetch live cricket odds',
-      error: err.message
-    });
-  }
-});
+//   } catch (err) {
+//     console.error('❌ Betfair API Error:', err.message);
+//     res.status(500).json({
+//       status: 'error',
+//       message: 'Failed to fetch live cricket odds',
+//       error: err.message
+//     });
+//   }
+// });
 
 async function betfairRpc(method, params) {
   const sessionToken = await getSessionToken();
@@ -576,107 +576,106 @@ async function betfairRpc(method, params) {
 }
 
 
-router.get("/inplay/soccer", async (req, res) => {
-  try {
-    const sportId = 1;
-    const maxResults = 30;
+// router.get("/inplay/soccer", async (req, res) => {
+//   try {
+//     const sportId = 1;
+//     const maxResults = 30;
 
-    const marketFilter = {
-      inPlayOnly: true, // ✅ Sirf in-play markets
-      eventTypeIds: [String(sportId)],
-      marketTypeCodes: ["MATCH_ODDS"],
-    };
+//     const marketFilter = {
+//       inPlayOnly: true, // ✅ Sirf in-play markets
+//       eventTypeIds: [String(sportId)],
+//       marketTypeCodes: ["MATCH_ODDS"],
+//     };
 
-    const marketCatalogueParams = {
-      filter: marketFilter,
-      maxResults,
-      marketProjection: ["EVENT", "RUNNER_DESCRIPTION", "MARKET_START_TIME"],
-    };
+//     const marketCatalogueParams = {
+//       filter: marketFilter,
+//       maxResults,
+//       marketProjection: ["EVENT", "RUNNER_DESCRIPTION", "MARKET_START_TIME"],
+//     };
 
-    const marketCatalogues = await betfairRpc(
-      "SportsAPING/v1.0/listMarketCatalogue",
-      marketCatalogueParams
-    );
+//     const marketCatalogues = await betfairRpc(
+//       "SportsAPING/v1.0/listMarketCatalogue",
+//       marketCatalogueParams
+//     );
 
-    const marketIds = marketCatalogues.map((m) => m.marketId);
-    if (marketIds.length === 0)
-      return res.json({ success: true, count: 0, markets: [] });
+//     const marketIds = marketCatalogues.map((m) => m.marketId);
+//     if (marketIds.length === 0)
+//       return res.json({ success: true, count: 0, markets: [] });
 
-    const marketBookParams = {
-      marketIds,
-      priceProjection: { priceData: ["EX_BEST_OFFERS"] },
-    };
+//     const marketBookParams = {
+//       marketIds,
+//       priceProjection: { priceData: ["EX_BEST_OFFERS"] },
+//     };
 
-    const marketBooks = await betfairRpc(
-      "SportsAPING/v1.0/listMarketBook",
-      marketBookParams
-    );
+//     const marketBooks = await betfairRpc(
+//       "SportsAPING/v1.0/listMarketBook",
+//       marketBookParams
+//     );
 
-    // ✅ Combine and only keep live matches
-    const combined = marketCatalogues
-      .map((market) => {
-        const book = marketBooks.find((b) => b.marketId === market.marketId);
-        if (!book || !book.inplay) return null; // ❌ Skip if not live
+//     // ✅ Combine and only keep live matches
+//     const combined = marketCatalogues
+//       .map((market) => {
+//         const book = marketBooks.find((b) => b.marketId === market.marketId);
+//         if (!book || !book.inplay) return null; // ❌ Skip if not live
 
-        const selections = (market.runners || []).map((runner) => {
-          const runnerBook = book.runners.find(
-            (r) => r.selectionId === runner.selectionId
-          );
-          return {
-            name: runner.runnerName,
-            back: runnerBook?.ex?.availableToBack?.[0] || {
-              price: "-",
-              size: "-",
-            },
-            lay: runnerBook?.ex?.availableToLay?.[0] || {
-              price: "-",
-              size: "-",
-            },
-          };
-        });
+//         const selections = (market.runners || []).map((runner) => {
+//           const runnerBook = book.runners.find(
+//             (r) => r.selectionId === runner.selectionId
+//           );
+//           return {
+//             name: runner.runnerName,
+//             back: runnerBook?.ex?.availableToBack?.[0] || {
+//               price: "-",
+//               size: "-",
+//             },
+//             lay: runnerBook?.ex?.availableToLay?.[0] || {
+//               price: "-",
+//               size: "-",
+//             },
+//           };
+//         });
 
-        // 🕒 FIX: Convert start time properly
-        const formattedStartTime = market.marketStartTime
-          ? new Date(market.marketStartTime).toLocaleTimeString("en-GB", {
-              hour: "2-digit",
-              minute: "2-digit",
-            })
-          : new Date().toLocaleTimeString("en-GB", {
-              hour: "2-digit",
-              minute: "2-digit",
-            });
+//         // 🕒 FIX: Convert start time properly
+//         const formattedStartTime = market.marketStartTime
+//           ? new Date(market.marketStartTime).toLocaleTimeString("en-GB", {
+//               hour: "2-digit",
+//               minute: "2-digit",
+//             })
+//           : new Date().toLocaleTimeString("en-GB", {
+//               hour: "2-digit",
+//               minute: "2-digit",
+//             });
 
-        return {
-          marketId: market.marketId,
-          match: market.event.name,
-          startTime: formattedStartTime,
-          status: book.inplay ? "IN-PLAY" : book.status || "UNKNOWN", // ✅ Custom status
-          totalMatched: book.totalMatched || 0,
-          odds: {
-            back1: selections[0]?.back || { price: "-", size: "-" },
-            lay1: selections[0]?.lay || { price: "-", size: "-" },
-            backX: selections[1]?.back || { price: "-", size: "-" },
-            layX: selections[1]?.lay || { price: "-", size: "-" },
-            back2: selections[2]?.back || { price: "-", size: "-" },
-            lay2: selections[2]?.lay || { price: "-", size: "-" },
-          },
-        };
-      })
-      .filter(Boolean)
-      .slice(0, 5); // ✅ Limit to 5 live matches only
+//         return {
+//           marketId: market.marketId,
+//           match: market.event.name,
+//           startTime: formattedStartTime,
+//           status: book.inplay ? "IN-PLAY" : book.status || "UNKNOWN", // ✅ Custom status
+//           totalMatched: book.totalMatched || 0,
+//           odds: {
+//             back1: selections[0]?.back || { price: "-", size: "-" },
+//             lay1: selections[0]?.lay || { price: "-", size: "-" },
+//             backX: selections[1]?.back || { price: "-", size: "-" },
+//             layX: selections[1]?.lay || { price: "-", size: "-" },
+//             back2: selections[2]?.back || { price: "-", size: "-" },
+//             lay2: selections[2]?.lay || { price: "-", size: "-" },
+//           },
+//         };
+//       })
+//       .filter(Boolean)
+//       .slice(0, 5); // ✅ Limit to 5 live matches only
 
-    res.json({
-      success: true,
-      sport: "Soccer",
-      count: combined.length,
-      markets: combined,
-    });
-  } catch (err) {
-    console.error("❌ Error fetching soccer in-play:", err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
+//     res.json({
+//       success: true,
+//       sport: "Soccer",
+//       count: combined.length,
+//       markets: combined,
+//     });
+//   } catch (err) {
+//     console.error("❌ Error fetching soccer in-play:", err.message);
+//     res.status(500).json({ success: false, error: err.message });
+//   }
+// });
 router.get("/inplay/cricket", async (req, res) => {
   try {
     const sportId = 4;
