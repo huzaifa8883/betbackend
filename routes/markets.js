@@ -168,9 +168,9 @@ router.get('/popular', async (req, res) => {
 // const USERNAME = 'latifsohu@hotmail.com'; // ✅ your Betfair username
 // const PASSWORD = 'Bahria@2026'; // ✅ your Betfair password
 
-const USERNAME = process.env.BETFAIR_USERNAME
-const PASSWORD = process.env.BETFAIR_PASSWORD
-const APP_KEY = process.env.BETFAIR_APP_KEY
+// const USERNAME = process.env.BETFAIR_USERNAME
+// const PASSWORD = process.env.BETFAIR_PASSWORD
+// const APP_KEY = process.env.BETFAIR_APP_KEY
 // console.log('Username:', USERNAME);
 // console.log('Password:', PASSWORD ? '******' : 'No Password');
 // console.log('App Key:', APP_KEY);
